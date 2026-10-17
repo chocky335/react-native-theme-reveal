@@ -10,6 +10,13 @@
     "ios",
     "src",
     "expo-module.config.json",
+    "!android/build",
+    "!android/.gradle",
+    "!android/.cxx",
+    "!android/src/test",
+    "!ios/build",
+    "!ios/Tests",
+    "!src/__tests__",
     "README.md",
     "LICENSE"
   ],
