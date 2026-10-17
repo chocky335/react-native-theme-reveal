@@ -1,4 +1,4 @@
-import { requireNativeModule } from 'expo-modules-core'
+import { requireNativeModule } from 'expo'
 
 import ThemeRevealModule from '../ThemeRevealModule'
 import type { Transition } from '../types'
@@ -9,8 +9,8 @@ type NativeMock = {
   cancel: jest.Mock<Promise<void>, []>
 }
 
-jest.mock('expo-modules-core', () => {
-  const actual = jest.requireActual<typeof import('expo-modules-core')>('expo-modules-core')
+jest.mock('expo', () => {
+  const actual = jest.requireActual<typeof import('expo')>('expo')
   const native = {
     prepare: jest.fn(() => Promise.resolve(true)),
     start: jest.fn(() => Promise.resolve()),
