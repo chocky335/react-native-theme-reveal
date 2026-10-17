@@ -37,12 +37,14 @@
   "homepage": "https://github.com/chocky335/react-native-theme-reveal#readme",
   "license": "MIT",
   "devDependencies": {
+    "@testing-library/react-native": "^13.3.3",
     "@types/react": "~19.2.10",
     "babel-preset-expo": "~57.0.15",
     "expo": "~57.0.29",
     "expo-module-scripts": "^56.0.3",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "react-test-renderer": "19.2.3",
     "typescript": "~5.9.2"
   },
   "peerDependencies": {
