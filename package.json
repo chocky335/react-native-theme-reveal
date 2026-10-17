@@ -1,0 +1,60 @@
+{
+  "name": "react-native-theme-reveal",
+  "version": "0.0.0",
+  "description": "Animate React Native theme switches from a native window snapshot",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "files": [
+    "build",
+    "android",
+    "ios",
+    "src",
+    "expo-module.config.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "theme",
+    "dark-mode",
+    "transition",
+    "animation"
+  ],
+  "repository": "https://github.com/chocky335/react-native-theme-reveal",
+  "bugs": {
+    "url": "https://github.com/chocky335/react-native-theme-reveal/issues"
+  },
+  "homepage": "https://github.com/chocky335/react-native-theme-reveal#readme",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "babel-preset-expo": "~57.0.15",
+    "expo": "~57.0.29",
+    "expo-module-scripts": "^56.0.3",
+    "expo-modules-core": "~57.0.23",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "typescript": "~5.9.2"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  },
+  "overrides": {
+    "expo-module-scripts": {
+      "jest-expo": "~57.0.6",
+      "@react-native/jest-preset": "0.86.3"
+    }
+  }
+}
