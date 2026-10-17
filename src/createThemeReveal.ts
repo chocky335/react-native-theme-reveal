@@ -1,6 +1,7 @@
 import { useLayoutEffect } from 'react'
 
 import ThemeRevealModule from './ThemeRevealModule'
+import { resolveTransition } from './resolveTransition'
 import { createStore, useStore } from './store'
 import type { Point, Shape, Transition, TransitionType, WipeDirection } from './types'
 
@@ -40,34 +41,6 @@ type PendingStart = {
 type RevealState<T> = {
   pending: PendingStart | null
   held: { id: number; theme: T } | null
-}
-
-const DEFAULT_DURATIONS: Record<TransitionType, number> = {
-  reveal: 450,
-  inverseReveal: 450,
-  wipe: 400,
-  crossfade: 300,
-}
-
-function chooseTransition<T>(
-  options: ThemeRevealOptions<T>,
-  requested: TransitionType | undefined,
-  origin: Point | undefined,
-): Transition {
-  const type = requested ?? options.transition ?? (origin ? 'reveal' : 'crossfade')
-  const durationOf = (kind: TransitionType) => options.durations?.[kind] ?? DEFAULT_DURATIONS[kind]
-  switch (type) {
-    case 'reveal':
-    case 'inverseReveal':
-      if (!origin) return { type: 'crossfade', durationMs: durationOf('crossfade') }
-      return options.shape
-        ? { type, origin, durationMs: durationOf(type), shape: options.shape }
-        : { type, origin, durationMs: durationOf(type) }
-    case 'wipe':
-      return { type, direction: options.wipeDirection ?? 'up', durationMs: durationOf(type) }
-    case 'crossfade':
-      return { type, durationMs: durationOf(type) }
-  }
 }
 
 export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeReveal<T> {
@@ -111,7 +84,14 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
       return
     }
 
-    const transition = chooseTransition(options, switchOptions?.transition, origin?.point)
+    const transition = resolveTransition({
+      requested: switchOptions?.transition,
+      fallback: options.transition,
+      origin: origin?.point ?? null,
+      shape: options.shape,
+      durations: options.durations,
+      wipeDirection: options.wipeDirection,
+    })
     store.set({ held: { id, theme: getTheme() } })
     setTheme(theme)
     store.set({ pending: { id, transition, startedAt, prepareMs } })
