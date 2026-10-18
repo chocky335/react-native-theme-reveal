@@ -1,0 +1,43 @@
+package expo.modules.themereveal
+
+import android.os.Build
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.pow
+
+internal object Motion {
+  private const val GROWTH_CURVE = 1.4
+  private const val EASE_X1 = 0.65f
+  private const val EASE_Y1 = 0f
+  private const val EASE_X2 = 0.35f
+  private const val EASE_Y2 = 1f
+  private const val EASE_STEPS = 24
+
+  fun growth(g: Double, from: Double, to: Double): Double = from * (to / from).pow(g.pow(GROWTH_CURVE))
+
+  fun shrink(g: Double, from: Double, to: Double): Double = max(0.0, growth(1 - g, from, to) - from * g)
+
+  fun coverScale(originX: Float, originY: Float, width: Int, height: Int, inscribedRadiusPx: Float): Float =
+    hypot(max(originX, width - originX), max(originY, height - originY)) / inscribedRadiusPx
+
+  fun easeInOut(t: Float): Float {
+    if (t <= 0f) return 0f
+    if (t >= 1f) return 1f
+    var lo = 0f
+    var hi = 1f
+    repeat(EASE_STEPS) {
+      val mid = (lo + hi) / 2
+      if (bezier(mid, EASE_X1, EASE_X2) < t) lo = mid else hi = mid
+    }
+    return bezier((lo + hi) / 2, EASE_Y1, EASE_Y2)
+  }
+
+  fun canAnimate(apiLevel: Int, resumed: Boolean): Boolean = apiLevel >= Build.VERSION_CODES.O && resumed
+
+  fun sameSize(snapshotW: Int, snapshotH: Int, w: Int, h: Int): Boolean = snapshotW == w && snapshotH == h
+
+  private fun bezier(s: Float, p1: Float, p2: Float): Float {
+    val u = 1 - s
+    return 3 * u * u * s * p1 + 3 * u * s * s * p2 + s * s * s
+  }
+}
