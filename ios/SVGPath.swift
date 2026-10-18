@@ -80,11 +80,11 @@ private struct SVGPathParser {
       line(to: point)
 
     case ascii("h"):
-      guard let x = number() else { return false }
+      guard let x = number(), isFinite(origin.x + x) else { return false }
       line(to: CGPoint(x: origin.x + x, y: current.y))
 
     case ascii("v"):
-      guard let y = number() else { return false }
+      guard let y = number(), isFinite(origin.y + y) else { return false }
       line(to: CGPoint(x: current.x, y: origin.y + y))
 
     case ascii("c"):
@@ -97,6 +97,7 @@ private struct SVGPathParser {
     case ascii("s"):
       guard let control2 = point(from: origin), let end = point(from: origin) else { return false }
       let control1 = previousCubicControl.map(reflect) ?? current
+      guard isFinite(control1) else { return false }
       cubic(to: end, control1: control1, control2: control2)
 
     case ascii("q"):
@@ -106,6 +107,7 @@ private struct SVGPathParser {
     case ascii("t"):
       guard let end = point(from: origin) else { return false }
       let control = previousQuadControl.map(reflect) ?? current
+      guard isFinite(control) else { return false }
       quad(to: end, control: control)
 
     case ascii("a"):
@@ -116,7 +118,9 @@ private struct SVGPathParser {
         let sweep = flag(),
         let end = point(from: origin)
       else { return false }
-      arc(to: end, rx: rx, ry: ry, rotation: rotation, largeArc: largeArc, sweep: sweep)
+      guard arc(to: end, rx: rx, ry: ry, rotation: rotation, largeArc: largeArc, sweep: sweep) else {
+        return false
+      }
 
     case ascii("z"):
       path.closeSubpath()
@@ -161,19 +165,21 @@ private struct SVGPathParser {
     CGPoint(x: 2 * current.x - control.x, y: 2 * current.y - control.y)
   }
 
-  /// Elliptical arc per the SVG 1.1 implementation notes: endpoint to centre
-  /// conversion (F.6.5) with out-of-range radii correction (F.6.6), drawn as
-  /// cubic segments of at most 90 degrees each.
+  /// Elliptical arc per the SVG 1.1 implementation notes: endpoint to centre conversion
+  /// (F.6.5) with out-of-range radii correction (F.6.6), drawn as cubic segments of at most
+  /// 90 degrees each. Returns false if the arithmetic leaves the finite range, so the parse
+  /// fails instead of trapping.
   private mutating func arc(
     to end: CGPoint, rx: CGFloat, ry: CGFloat, rotation: CGFloat, largeArc: Bool, sweep: Bool
-  ) {
+  ) -> Bool {
     let start = current
-    guard start != end else { return }
+    guard isFinite(start), isFinite(end) else { return false }
+    guard start != end else { return true }
     var rx = abs(rx)
     var ry = abs(ry)
     guard rx > 0, ry > 0 else {
       line(to: end)
-      return
+      return true
     }
 
     let phi = rotation * .pi / 180
@@ -198,7 +204,13 @@ private struct SVGPathParser {
     let rx2 = rx * rx
     let ry2 = ry * ry
     let denominator = rx2 * y1 * y1 + ry2 * x1 * x1
-    var coefficient = max(0, (rx2 * ry2 - denominator) / denominator).squareRoot()
+    let ratio = (rx2 * ry2 - denominator) / denominator
+    // End points too close for these radii to place a centre, so draw a line.
+    guard denominator != 0, ratio != .infinity else {
+      line(to: end)
+      return true
+    }
+    var coefficient = max(0, ratio).squareRoot()
     if largeArc == sweep {
       coefficient = -coefficient
     }
@@ -218,6 +230,9 @@ private struct SVGPathParser {
     } else if !sweep, sweepAngle > 0 {
       sweepAngle -= 2 * .pi
     }
+    guard centreX.isFinite, centreY.isFinite, startAngle.isFinite, sweepAngle.isFinite else {
+      return false
+    }
 
     func onEllipse(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
       CGPoint(
@@ -230,7 +245,7 @@ private struct SVGPathParser {
     let step = sweepAngle / CGFloat(segments)
     let handle = 4 / 3 * tan(step / 4)
     var angle = startAngle
-    beginSegment()
+    var curves: [(point: CGPoint, control1: CGPoint, control2: CGPoint)] = []
     for segment in 0..<segments {
       let next = angle + step
       let cos1 = cos(angle)
@@ -240,10 +255,16 @@ private struct SVGPathParser {
       let control1 = onEllipse(cos1 - handle * sin1, sin1 + handle * cos1)
       let control2 = onEllipse(cos2 + handle * sin2, sin2 - handle * cos2)
       let point = segment == segments - 1 ? end : onEllipse(cos2, sin2)
-      path.addCurve(to: point, control1: control1, control2: control2)
+      guard isFinite(control1), isFinite(control2), isFinite(point) else { return false }
+      curves.append((point, control1, control2))
       angle = next
     }
+    beginSegment()
+    for curve in curves {
+      path.addCurve(to: curve.point, control1: curve.control1, control2: curve.control2)
+    }
     current = end
+    return true
   }
 
   // MARK: - Tokens
@@ -270,7 +291,8 @@ private struct SVGPathParser {
 
   private mutating func point(from origin: CGPoint) -> CGPoint? {
     guard let x = number(), let y = number() else { return nil }
-    return CGPoint(x: origin.x + x, y: origin.y + y)
+    let point = CGPoint(x: origin.x + x, y: origin.y + y)
+    return isFinite(point) ? point : nil
   }
 
   /// Scans `[sign] digits [. digits] [e [sign] digits]`. A sign or a second
@@ -336,6 +358,14 @@ private struct SVGPathParser {
       return nil
     }
   }
+}
+
+private func isFinite(_ value: CGFloat) -> Bool {
+  value.isFinite
+}
+
+private func isFinite(_ point: CGPoint) -> Bool {
+  point.x.isFinite && point.y.isFinite
 }
 
 private func ascii(_ scalar: Unicode.Scalar) -> UInt8 {

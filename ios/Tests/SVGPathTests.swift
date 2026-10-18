@@ -215,6 +215,21 @@ enum SVGPathTests {
     // Same start and end point: the arc is skipped.
     shape("M1 1 A1 1 0 0 1 1 1L2 2", [move(1, 1), line(2, 2)])
 
+    // End points too close for the radius to place a centre (the centre arithmetic
+    // underflows), so the arc becomes a line to the end point.
+    shape("M0 0 A1 1 0 0 1 1e-160 0", [move(0, 0), line(1e-160, 0)])
+    shape("M0 0 A1 1 0 0 1 1e-320 0", [move(0, 0), line(1e-320, 0)])
+
+    // Arithmetic that leaves the finite range returns nil, never a trap or an inf point.
+    rejects("M0 0 A1e200 1e-200 45 0 1 1 1")
+    rejects("M1e308 0 l1e308 0 A1 1 0 0 1 0 0")
+    rejects("M1e308 0 l1e308 0 l1 1")
+    rejects("M1e308 0h1e308")
+    rejects("M0 1e308v1e308")
+    rejects("M1e308 0C0 0 -1e308 0 1e308 0S1 1 1 1")
+    rejects("M1e308 0Q-1e308 0 1e308 0T1 1")
+    rejects("M-1.7e308 0 A1 1 0 1 1 1.7e308 0")
+
     // Malformed input returns nil.
     rejects("M0 0 L")
     rejects("M0 0 L1")
