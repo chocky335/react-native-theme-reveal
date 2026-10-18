@@ -6,8 +6,10 @@ import android.graphics.PointF
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import expo.modules.kotlin.Promise
@@ -43,9 +45,14 @@ internal class TransitionRecord : Record {
   @Field val direction: String? = null
 }
 
+// Overlay has to stay the size of cover. The React root the origin comes from sits at (rootX, rootY) on screen, the
+// overlay at (screenX, screenY).
+private class OverlayGeometry(val cover: View, val rootX: Int, val rootY: Int, val screenX: Int, val screenY: Int)
+
 class ThemeRevealModule : Module() {
   private val mainHandler = Handler(Looper.getMainLooper())
   private var overlay: RevealOverlayView? = null
+  private var geometry: OverlayGeometry? = null
   private var started: Promise? = null
   private var generation = 0
   private val failsafe = Runnable { removeOverlay() }
@@ -53,8 +60,8 @@ class ThemeRevealModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ThemeReveal")
 
-    AsyncFunction("prepare") { _: Int?, promise: Promise ->
-      prepare(promise)
+    AsyncFunction("prepare") { viewTag: Int?, promise: Promise ->
+      prepare(viewTag, promise)
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("start") { transition: TransitionRecord, promise: Promise ->
@@ -70,9 +77,16 @@ class ThemeRevealModule : Module() {
       generation++
       removeOverlay()
     }
+
+    OnDestroy {
+      mainHandler.post {
+        generation++
+        removeOverlay()
+      }
+    }
   }
 
-  private fun prepare(promise: Promise) {
+  private fun prepare(viewTag: Int?, promise: Promise) {
     val ticket = ++generation
     removeOverlay()
     val activity = appContext.currentActivity
@@ -84,19 +98,31 @@ class ThemeRevealModule : Module() {
       promise.resolve(false)
       return
     }
-    WindowSnapshot.capture(window, decor.width, decor.height, mainHandler) { bitmap ->
-      if (bitmap == null) {
+    val tapped = viewTag?.let { findView(it) }?.takeIf { it.isAttachedToWindow }
+    val root = tapped?.rootView ?: WindowSnapshot.focusedRoot(activity)
+    val reactRoot = tapped?.let { WindowSnapshot.reactRootOf(it) } ?: root ?: decor
+    WindowSnapshot.capture(activity, root, mainHandler) { snapshot ->
+      if (snapshot == null) {
         promise.resolve(false)
         return@capture
       }
-      if (ticket != generation || activity.isFinishing || activity.isDestroyed) {
+      val bitmap = snapshot.bitmap
+      if (ticket != generation || activity.isFinishing || activity.isDestroyed || !isResumed(activity) ||
+        !snapshot.host.isAttachedToWindow
+      ) {
         bitmap.recycle()
         promise.resolve(false)
         return@capture
       }
       val view = RevealOverlayView(activity, bitmap)
-      decor.addView(view, ViewGroup.LayoutParams(bitmap.width, bitmap.height))
+      val params = FrameLayout.LayoutParams(bitmap.width, bitmap.height, Gravity.TOP or Gravity.LEFT).apply {
+        leftMargin = snapshot.hostX
+        topMargin = snapshot.hostY
+      }
+      snapshot.host.addView(view, params)
+      val rootAt = WindowSnapshot.locationOf(reactRoot)
       overlay = view
+      geometry = OverlayGeometry(snapshot.cover, rootAt[0], rootAt[1], snapshot.screenX, snapshot.screenY)
       mainHandler.postDelayed(failsafe, FAILSAFE_MS)
       promise.resolve(true)
     }
@@ -111,10 +137,10 @@ class ThemeRevealModule : Module() {
     mainHandler.removeCallbacks(failsafe)
     started?.resolve()
     started = promise
-    val decor = view.parent as? View
+    val cover = geometry?.cover
     val durationMs = transition.durationMs.toLong()
-    if (decor == null || durationMs <= 0 || !animatorsEnabled() ||
-      !Motion.sameSize(view.snapshotWidth, view.snapshotHeight, decor.width, decor.height)
+    if (view.parent == null || cover == null || durationMs <= 0 || !animatorsEnabled() ||
+      !Motion.sameSize(view.snapshotWidth, view.snapshotHeight, cover.width, cover.height)
     ) {
       removeOverlay()
       return
@@ -132,10 +158,17 @@ class ThemeRevealModule : Module() {
     when (transition.type) {
       "reveal", "inverseReveal" -> {
         val origin = transition.origin ?: return false
+        val space = geometry ?: return false
         val density = view.resources.displayMetrics.density
-        val x = (origin.x * density).toFloat()
-        val y = (origin.y * density).toFloat()
-        view.reveal(shapeOf(transition.shape), x, y, transition.type == "inverseReveal", durationMs, onEnd)
+        val point = Motion.toOverlay(
+          (origin.x * density).toFloat(),
+          (origin.y * density).toFloat(),
+          space.rootX,
+          space.rootY,
+          space.screenX,
+          space.screenY,
+        )
+        view.reveal(shapeOf(transition.shape), point[0], point[1], transition.type == "inverseReveal", durationMs, onEnd)
       }
       "wipe" -> view.wipe(wipeDirectionOf(transition.direction) ?: return false, durationMs, onEnd)
       "crossfade" -> view.crossfade(durationMs, onEnd)
@@ -150,8 +183,15 @@ class ThemeRevealModule : Module() {
     started = null
     val view = overlay ?: return
     overlay = null
+    geometry = null
     (view.parent as? ViewGroup)?.removeView(view)
     view.release()
+  }
+
+  private fun findView(viewTag: Int): View? = try {
+    appContext.findView<View>(viewTag)
+  } catch (_: RuntimeException) {
+    null
   }
 
   private fun isResumed(activity: Activity): Boolean =

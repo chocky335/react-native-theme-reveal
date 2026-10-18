@@ -3,7 +3,13 @@ package expo.modules.themereveal
 import android.os.Build
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
+
+internal data class Frame(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+  val isEmpty: Boolean get() = right <= left || bottom <= top
+}
 
 internal object Motion {
   private const val GROWTH_CURVE = 1.4
@@ -35,6 +41,21 @@ internal object Motion {
   fun canAnimate(apiLevel: Int, resumed: Boolean): Boolean = apiLevel >= Build.VERSION_CODES.O && resumed
 
   fun sameSize(snapshotW: Int, snapshotH: Int, w: Int, h: Int): Boolean = snapshotW == w && snapshotH == h
+
+  fun dialogFrame(decorX: Int, decorY: Int, decorW: Int, decorH: Int, screenW: Int, screenH: Int): Frame =
+    Frame(max(decorX, 0), max(decorY, 0), min(decorX + decorW, screenW), min(decorY + decorH, screenH))
+
+  fun dimAlpha(dimAmount: Float): Int = if (dimAmount.isNaN()) 0 else (dimAmount.coerceIn(0f, 1f) * 255).roundToInt()
+
+  fun toOverlay(
+    xPx: Float,
+    yPx: Float,
+    rootScreenX: Int,
+    rootScreenY: Int,
+    overlayScreenX: Int,
+    overlayScreenY: Int,
+  ): FloatArray =
+    floatArrayOf(xPx + (rootScreenX - overlayScreenX), yPx + (rootScreenY - overlayScreenY))
 
   private fun bezier(s: Float, p1: Float, p2: Float): Float {
     val u = 1 - s

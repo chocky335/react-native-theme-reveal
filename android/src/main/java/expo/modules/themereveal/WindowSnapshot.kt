@@ -1,12 +1,106 @@
 package expo.modules.themereveal
 
+import android.app.Activity
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.view.PixelCopy
+import android.view.View
+import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowManager
+import com.facebook.react.uimanager.RootView
+import com.facebook.react.views.modal.ReactModalHostView
+
+// Overlay goes into host at (hostX, hostY), bitmap-sized. The bitmap covers cover (the activity decor view), whose
+// top-left corner is at (screenX, screenY) on screen.
+internal class Snapshot(
+  val bitmap: Bitmap,
+  val host: ViewGroup,
+  val cover: View,
+  val hostX: Int,
+  val hostY: Int,
+  val screenX: Int,
+  val screenY: Int,
+)
 
 internal object WindowSnapshot {
+  fun capture(activity: Activity, root: View?, handler: Handler, onResult: (Snapshot?) -> Unit) {
+    val window = activity.window
+    val decor = window?.decorView as? ViewGroup
+    if (window == null || decor == null) {
+      onResult(null)
+      return
+    }
+    val screen = locationOf(decor)
+    if (root == null || root === decor) {
+      capture(window, decor.width, decor.height, handler) { bitmap ->
+        onResult(bitmap?.let { Snapshot(it, decor, decor, 0, 0, screen[0], screen[1]) })
+      }
+      return
+    }
+    val dialog = findModalWindow(decor) { it.peekDecorView() === root }
+    val dialogDecor = dialog?.peekDecorView() as? ViewGroup
+    if (dialog == null || dialogDecor == null) {
+      onResult(null)
+      return
+    }
+    val at = locationOf(dialogDecor)
+    val dialogX = at[0] - screen[0]
+    val dialogY = at[1] - screen[1]
+    val frame = Motion.dialogFrame(dialogX, dialogY, dialogDecor.width, dialogDecor.height, decor.width, decor.height)
+    val attributes = dialog.attributes
+    val dim = if (attributes.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND != 0) {
+      Motion.dimAlpha(attributes.dimAmount)
+    } else {
+      0
+    }
+    capturePair(window, decor.width, decor.height, dialog, dialogDecor.width, dialogDecor.height, handler) { back, front ->
+      if (back == null || front == null) {
+        back?.recycle()
+        front?.recycle()
+        onResult(null)
+        return@capturePair
+      }
+      val composed = try {
+        compose(back, front, frame, dialogX, dialogY, dim)
+        true
+      } catch (_: RuntimeException) {
+        false
+      } finally {
+        front.recycle()
+      }
+      if (!composed) {
+        back.recycle()
+        onResult(null)
+        return@capturePair
+      }
+      onResult(Snapshot(back, dialogDecor, decor, -dialogX, -dialogY, screen[0], screen[1]))
+    }
+  }
+
+  // Focused window root: the activity decor view, or a React Native modal's decor view.
+  fun focusedRoot(activity: Activity): View? {
+    val decor = activity.window?.decorView as? ViewGroup ?: return null
+    if (decor.hasWindowFocus()) return decor
+    return findModalWindow(decor) { it.peekDecorView()?.hasWindowFocus() == true }?.peekDecorView() ?: decor
+  }
+
+  // React root that JS measures pageX and pageY against.
+  fun reactRootOf(view: View): View {
+    var current: View? = view
+    while (current != null) {
+      if (current is RootView) return current
+      current = current.parent as? View
+    }
+    return view.rootView
+  }
+
+  fun locationOf(view: View): IntArray = IntArray(2).also { view.getLocationOnScreen(it) }
+
   fun capture(window: Window, width: Int, height: Int, handler: Handler, onResult: (Bitmap?) -> Unit) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || width <= 0 || height <= 0) {
       onResult(null)
@@ -32,5 +126,49 @@ internal object WindowSnapshot {
       bitmap.recycle()
       onResult(null)
     }
+  }
+
+  // Both copies run concurrently. onResult fires once, after the second one finishes.
+  private fun capturePair(
+    first: Window,
+    firstW: Int,
+    firstH: Int,
+    second: Window,
+    secondW: Int,
+    secondH: Int,
+    handler: Handler,
+    onResult: (Bitmap?, Bitmap?) -> Unit,
+  ) {
+    val results = arrayOfNulls<Bitmap>(2)
+    var pending = 2
+    val done = { index: Int, bitmap: Bitmap? ->
+      results[index] = bitmap
+      pending--
+      if (pending == 0) onResult(results[0], results[1])
+    }
+    capture(first, firstW, firstH, handler) { done(0, it) }
+    capture(second, secondW, secondH, handler) { done(1, it) }
+  }
+
+  // PixelCopy doesn't capture the dim behind a dialog: the compositor draws it.
+  private fun compose(back: Bitmap, front: Bitmap, frame: Frame, frontX: Int, frontY: Int, dimAlpha: Int) {
+    val canvas = Canvas(back)
+    if (dimAlpha > 0) canvas.drawColor(Color.argb(dimAlpha, 0, 0, 0))
+    if (frame.isEmpty) return
+    val source = Rect(frame.left - frontX, frame.top - frontY, frame.right - frontX, frame.bottom - frontY)
+    canvas.drawBitmap(front, source, Rect(frame.left, frame.top, frame.right, frame.bottom), null)
+  }
+
+  private fun findModalWindow(view: View, match: (Window) -> Boolean): Window? {
+    if (view is ReactModalHostView) {
+      val window = view.dialog?.takeIf { it.isShowing }?.window
+      if (window != null && match(window)) return window
+    }
+    if (view !is ViewGroup) return null
+    for (index in 0 until view.childCount) {
+      val found = findModalWindow(view.getChildAt(index) ?: continue, match)
+      if (found != null) return found
+    }
+    return null
   }
 }
