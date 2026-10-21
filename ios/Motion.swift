@@ -18,10 +18,12 @@ struct RevealShape {
     anchor: .zero,
     inscribedRadius: 1)
 
-  // An unparsable or empty path, or a non-finite anchor, falls back to the unit circle.
+  // An unparsable or empty path, or a non-finite anchor, falls back to the unit circle. The
+  // path keeps nonzero fill (as on Android) inside the even-odd reveal mask.
   static func resolve(path: String, anchor: CGPoint, inscribedRadius: CGFloat) -> RevealShape {
     guard anchor.x.isFinite, anchor.y.isFinite, let parsed = SVGPath.parse(path) else { return circle }
-    let shape = RevealShape(path: parsed, anchor: anchor, inscribedRadius: inscribedRadius)
+    let shape = RevealShape(
+      path: parsed.normalized(using: .winding), anchor: anchor, inscribedRadius: inscribedRadius)
     guard shape.bounds.width > 0, shape.bounds.height > 0 else { return circle }
     return shape
   }
@@ -38,6 +40,9 @@ struct RevealShape {
 enum Motion {
   static let startHeight: CGFloat = 24
   static let samplesPerSecond = 120.0
+  // Keyframes stop at 10 s of samples; a longer duration stretches them.
+  static let maxSeconds = 10.0
+  static let maxSamples = 1200
   static let easeX1 = 0.65
   static let easeY1 = 0.0
   static let easeX2 = 0.35
@@ -110,7 +115,8 @@ enum Motion {
   }
 
   static func sampleCount(duration: Double) -> Int {
-    max(2, Int((duration * samplesPerSecond).rounded()))
+    guard duration > 0 else { return 2 }
+    return min(maxSamples, max(2, Int((min(duration, maxSeconds) * samplesPerSecond).rounded())))
   }
 
   // steps + 1 scales, g linear in time from 0 to 1.

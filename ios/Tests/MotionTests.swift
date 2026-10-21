@@ -14,6 +14,12 @@ private func close(_ a: CGRect, _ b: CGRect) -> Bool {
     && close(Double(a.height), Double(b.height), 1e-6)
 }
 
+private func elementCount(_ path: CGPath) -> Int {
+  var count = 0
+  path.applyWithBlock { _ in count += 1 }
+  return count
+}
+
 @main
 enum MotionTests {
   static func main() {
@@ -145,12 +151,38 @@ enum MotionTests {
     // keyframes: 120 samples per second, both ends included, at least two.
     check(Motion.sampleCount(duration: 0.45) == 54, "450 ms gives 54 steps")
     check(Motion.sampleCount(duration: 0.001) == 2, "a tiny duration still gives 2 steps")
+    check(Motion.sampleCount(duration: 10) == 1200, "10 s gives the cap of 1200 steps")
+    check(Motion.sampleCount(duration: 60) == 1200, "a long duration is capped at 1200 steps")
+    check(Motion.sampleCount(duration: .infinity) == 1200, "an infinite duration is capped at 1200 steps")
+    check(Motion.sampleCount(duration: .nan) == 2, "a NaN duration gives 2 steps")
     let grow = Motion.scales(from: 0.5, to: 30, steps: 54, inverse: false)
     check(grow.count == 55, "scales include both ends")
     check(close(grow.first ?? 0, 0.5, 1e-9) && close(grow.last ?? 0, 30, 1e-9), "reveal scales run from to to")
     let shrinkScales = Motion.scales(from: 0.5, to: 30, steps: 54, inverse: true)
     check(close(shrinkScales.first ?? 0, 30, 1e-9) && close(shrinkScales.last ?? 1, 0, 1e-9),
           "inverse scales run from the cover scale to 0")
+
+    // Keyframed paths interpolate only with the same element count in every path,
+    // scale 0 included.
+    for inverse in [false, true] {
+      let counts = Set(Motion.scales(from: 0.8, to: 30, steps: 54, inverse: inverse).map { scale in
+        elementCount(Motion.maskPath(square, origin: CGPoint(x: 100, y: 200), scale: CGFloat(scale),
+                                     bounds: window, inverse: inverse))
+      })
+      check(counts.count == 1, "every \(inverse ? "inverse " : "")mask path has the same element count: \(counts)")
+    }
+    let lastInverse = Motion.maskPath(square, origin: CGPoint(x: 100, y: 200), scale: 0, bounds: window, inverse: true)
+    check(elementCount(lastInverse) == elementCount(inverseMask), "a scale-0 mask keeps its elements")
+
+    // Self-intersecting shapes fill nonzero (as on Android): the pentagram centre is inside
+    // the shape under even-odd, so it's a hole in the reveal mask.
+    let star = RevealShape.resolve(path: "M50 0 L79 90 L2 35 L98 35 L21 90 Z", anchor: CGPoint(x: 50, y: 50),
+                                   inscribedRadius: 20)
+    let centre = CGPoint(x: 50, y: 50)
+    check(star.path.contains(centre, using: .evenOdd), "the pentagram centre is inside the shape under even-odd")
+    let starMask = Motion.maskPath(star, origin: centre, scale: 1, bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+                                   inverse: false)
+    check(!starMask.contains(centre, using: .evenOdd), "the pentagram centre is a hole in the reveal mask")
 
     // wipeOffset: the direction is the way the edge travels.
     let size = CGSize(width: 390, height: 844)
