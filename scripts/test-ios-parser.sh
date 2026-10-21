@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds and runs the iOS SVG path parser tests with swiftc (no Xcode project, no simulator).
+# Builds and runs the iOS SVG path parser and motion tests with swiftc (no Xcode project, no simulator).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,3 +16,13 @@ xcrun swiftc -swift-version 5 \
   -o "$binary"
 
 "$binary"
+
+motion_binary="${TMPDIR:-/tmp}/motion-tests"
+
+xcrun swiftc -swift-version 5 \
+  "$root/ios/SVGPath.swift" \
+  "$root/ios/Motion.swift" \
+  "$root/ios/Tests/MotionTests.swift" \
+  -o "$motion_binary"
+
+"$motion_binary"
