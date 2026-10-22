@@ -7,7 +7,7 @@ import { opposite, palette } from './src/theme'
 import type { Theme } from './src/theme'
 import { useFollowSystem } from './src/useFollowSystem'
 import { useSwitchLink } from './src/useSwitchLink'
-import type { ModalLink } from './src/useSwitchLink'
+import type { ModalLink, SwitchLink } from './src/useSwitchLink'
 
 const TOP_INSET = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 62
 
@@ -32,15 +32,17 @@ export default function App() {
     if (system !== themeRef.current) void reveals.circle.switchTo(system)
   })
 
-  const [modalLink, setModalLink] = useState<ModalLink | null>(null)
-  useSwitchLink((link) => {
-    if (link.kind === 'modal') {
-      setModalLink(link)
-      return
-    }
-    const { variant, transition, point } = link
+  const switchFromLink = ({ variant, transition, point }: SwitchLink) => {
     if (point) reveals[variant].setOrigin(point)
     void reveals[variant].switchTo(opposite(themeRef.current), { transition })
+  }
+
+  const [modalLink, setModalLink] = useState<ModalLink | null>(null)
+  const [keyboardLink, setKeyboardLink] = useState<SwitchLink | null>(null)
+  useSwitchLink((link) => {
+    if (link.kind === 'modal') setModalLink(link)
+    else if (link.kind === 'keyboard') setKeyboardLink(link)
+    else switchFromLink(link)
   })
 
   // Switching while the app is in the background applies the theme without animation.
@@ -69,6 +71,8 @@ export default function App() {
         onSwitch={(button, event, view) =>
           void switchFromPress({ reveals, getTheme, measureOnly }, button, event, view)
         }
+        keyboardLink={keyboardLink}
+        onKeyboardUp={switchFromLink}
         modalLink={modalLink}
         onModalLinkOrigin={({ variant, transition }, point, viewTag) => {
           reveals[variant].setOrigin(point, viewTag)

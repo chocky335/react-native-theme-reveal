@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native'
+import { useEffect, useRef, useState } from 'react'
+import { Keyboard, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native'
 import type { GestureResponderEvent } from 'react-native'
 import type { Point } from 'react-native-theme-reveal'
 
@@ -9,7 +9,9 @@ import type { ModalPresentation } from './ModalScreen'
 import { SWITCH_BUTTONS } from './reveals'
 import type { SwitchButton } from './reveals'
 import type { Colors, Theme } from './theme'
-import type { ModalLink } from './useSwitchLink'
+import type { ModalLink, SwitchLink } from './useSwitchLink'
+
+const KEYBOARD_LINK_DELAY_MS = 400
 
 type Toggle = { value: boolean; set: (value: boolean) => void }
 
@@ -21,6 +23,8 @@ type Props = {
   measureOnly: Toggle
   switchOnBackground: Toggle
   onSwitch: (button: SwitchButton, event: GestureResponderEvent, view: View | null) => void
+  keyboardLink: SwitchLink | null
+  onKeyboardUp: (link: SwitchLink) => void
   modalLink: ModalLink | null
   onModalLinkOrigin: (link: ModalLink, point: Point, viewTag?: number) => void
 }
@@ -33,12 +37,34 @@ export function HomeScreen({
   measureOnly,
   switchOnBackground,
   onSwitch,
+  keyboardLink,
+  onKeyboardUp,
   modalLink,
   onModalLinkOrigin,
 }: Props) {
   const [presentation, setPresentation] = useState<ModalPresentation>('fullScreen')
   const [closeOnSelect, setCloseOnSelect] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
+
+  // A keyboard link focuses the text field and switches once the keyboard is up.
+  const inputRef = useRef<TextInput>(null)
+  const onKeyboardUpRef = useRef(onKeyboardUp)
+  useEffect(() => {
+    onKeyboardUpRef.current = onKeyboardUp
+  })
+  useEffect(() => {
+    if (!keyboardLink) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+      subscription.remove()
+      timer = setTimeout(() => onKeyboardUpRef.current(keyboardLink), KEYBOARD_LINK_DELAY_MS)
+    })
+    inputRef.current?.focus()
+    return () => {
+      subscription.remove()
+      clearTimeout(timer)
+    }
+  }, [keyboardLink])
 
   useEffect(() => {
     if (!modalLink) return
@@ -79,6 +105,8 @@ export function HomeScreen({
       ))}
 
       <TextInput
+        ref={inputRef}
+        keyboardAppearance={theme}
         placeholder="Type here, then switch with the keyboard up"
         placeholderTextColor={colors.muted}
         style={[styles.input, { color: colors.text, borderColor: colors.button }]}

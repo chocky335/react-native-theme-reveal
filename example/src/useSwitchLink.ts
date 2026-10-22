@@ -15,7 +15,10 @@ export type ModalLink = {
   transition?: TransitionType
 }
 
-export type Link = ({ kind: 'switch' } & SwitchLink) | ({ kind: 'modal' } & ModalLink)
+export type Link =
+  | ({ kind: 'switch' } & SwitchLink)
+  | ({ kind: 'modal' } & ModalLink)
+  | ({ kind: 'keyboard' } & SwitchLink)
 
 const VARIANTS: Variant[] = ['circle', 'star', 'wipeUp', 'wipeDown', 'wipeLeft', 'wipeRight']
 const TRANSITIONS: TransitionType[] = ['reveal', 'inverseReveal', 'wipe', 'crossfade']
@@ -24,6 +27,7 @@ const LAUNCH_LINK_GAP_MS = 1500
 
 // themereveal-example://switch?variant=star&transition=reveal&x=40&y=520 (x, y in window points).
 // themereveal-example://modal?presentation=pageSheet&measure=page|window&variant=circle&transition=reveal
+// themereveal-example://keyboard?variant=circle&transition=reveal&x=40&y=150 (focuses the text field first)
 export function parseLink(url: string): Link | null {
   const [base, query = ''] = url.split('?')
   const params = new Map(
@@ -39,10 +43,11 @@ export function parseLink(url: string): Link | null {
     const measure = params.get('measure') === 'window' ? 'window' : 'page'
     return { kind: 'modal', presentation, measure, variant, transition }
   }
-  if (!base.endsWith('://switch')) return null
   const x = Number(params.get('x'))
   const y = Number(params.get('y'))
   const point = params.has('x') && params.has('y') && isFinite(x) && isFinite(y) ? { x, y } : undefined
+  if (base.endsWith('://keyboard')) return { kind: 'keyboard', variant, transition, point }
+  if (!base.endsWith('://switch')) return null
   return { kind: 'switch', variant, transition, point }
 }
 
