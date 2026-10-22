@@ -4,11 +4,12 @@
     "slug": "react-native-theme-reveal-example",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": "themereveal-example",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "expo.modules.themereveal.example"
+      "bundleIdentifier": "expo.modules.themereveal.example",
+      "userInterfaceStyle": "automatic"
     },
     "android": {
       "adaptiveIcon": {

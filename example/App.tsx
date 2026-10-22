@@ -1,66 +1,80 @@
-import { useRef, useState } from 'react'
-import { Pressable, StatusBar, StyleSheet, Text, View } from 'react-native'
-import type { GestureResponderEvent } from 'react-native'
-import { createThemeReveal, originFromPress } from 'react-native-theme-reveal'
+import { useEffect, useRef, useState } from 'react'
+import { AppState, Platform, StatusBar } from 'react-native'
 
-type Theme = 'light' | 'dark'
+import { HomeScreen } from './src/HomeScreen'
+import { createReveals, switchFromPress, useReveals } from './src/reveals'
+import { opposite, palette } from './src/theme'
+import type { Theme } from './src/theme'
+import { useFollowSystem } from './src/useFollowSystem'
+import { useSwitchLink } from './src/useSwitchLink'
+import type { ModalLink } from './src/useSwitchLink'
 
-const palette = {
-  light: { background: '#ffffff', text: '#111111', button: '#e4e4e7' },
-  dark: { background: '#111111', text: '#f4f4f5', button: '#3f3f46' },
-} as const
+const TOP_INSET = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 62
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>('light')
   const themeRef = useRef<Theme>(theme)
-  const buttonRef = useRef<View>(null)
-  const [reveal] = useState(() =>
-    createThemeReveal<Theme>({
-      getTheme: () => themeRef.current,
-      setTheme: (next) => {
-        themeRef.current = next
-        setTheme(next)
-      },
+  const getTheme = () => themeRef.current
+  const [reveals] = useState(() =>
+    createReveals(getTheme, (next) => {
+      themeRef.current = next
+      setTheme(next)
     }),
   )
-  reveal.useStart()
+  const heldTheme = useReveals(reveals)
+
+  const [followSystem, setFollowSystem] = useState(false)
+  const [measureOnly, setMeasureOnly] = useState(false)
+  const [switchOnBackground, setSwitchOnBackground] = useState(false)
+
+  // No origin: the switch falls back to a crossfade.
+  useFollowSystem(followSystem, (system) => {
+    if (system !== themeRef.current) void reveals.circle.switchTo(system)
+  })
+
+  const [modalLink, setModalLink] = useState<ModalLink | null>(null)
+  useSwitchLink((link) => {
+    if (link.kind === 'modal') {
+      setModalLink(link)
+      return
+    }
+    const { variant, transition, point } = link
+    if (point) reveals[variant].setOrigin(point)
+    void reveals[variant].switchTo(opposite(themeRef.current), { transition })
+  })
+
+  // Switching while the app is in the background applies the theme without animation.
+  useEffect(() => {
+    if (!switchOnBackground) return
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'background') return
+      setSwitchOnBackground(false)
+      void reveals.circle.switchTo(opposite(themeRef.current))
+    })
+    return () => subscription.remove()
+  }, [switchOnBackground, reveals])
 
   const colors = palette[theme]
 
-  const onPress = async (event: GestureResponderEvent) => {
-    const origin = await originFromPress(event, buttonRef.current)
-    if (origin) reveal.setOrigin(origin.point, origin.viewTag)
-    await reveal.switchTo(themeRef.current === 'light' ? 'dark' : 'light')
-  }
-
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <StatusBar barStyle={theme === 'light' ? 'dark-content' : 'light-content'} />
-      <Text style={[styles.title, { color: colors.text }]}>Theme: {theme}</Text>
-      <Pressable
-        ref={buttonRef}
-        onPress={onPress}
-        style={[styles.button, { backgroundColor: colors.button }]}
-      >
-        <Text style={{ color: colors.text }}>Switch theme</Text>
-      </Pressable>
-    </View>
+    <>
+      <StatusBar barStyle={(heldTheme ?? theme) === 'light' ? 'dark-content' : 'light-content'} />
+      <HomeScreen
+        theme={theme}
+        colors={colors}
+        topInset={TOP_INSET}
+        followSystem={{ value: followSystem, set: setFollowSystem }}
+        measureOnly={{ value: measureOnly, set: setMeasureOnly }}
+        switchOnBackground={{ value: switchOnBackground, set: setSwitchOnBackground }}
+        onSwitch={(button, event, view) =>
+          void switchFromPress({ reveals, getTheme, measureOnly }, button, event, view)
+        }
+        modalLink={modalLink}
+        onModalLinkOrigin={({ variant, transition }, point, viewTag) => {
+          reveals[variant].setOrigin(point, viewTag)
+          void reveals[variant].switchTo(opposite(themeRef.current), { transition })
+        }}
+      />
+    </>
   )
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 20,
-    marginBottom: 24,
-  },
-  button: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-})
