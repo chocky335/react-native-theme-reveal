@@ -22,7 +22,11 @@ export type ThemeRevealOptions<T> = {
   onSettled?: (info: SettledInfo) => void
 }
 
-export type SwitchOptions = { transition?: TransitionType }
+export type SwitchOptions = {
+  transition?: TransitionType
+  shape?: Shape
+  wipeDirection?: WipeDirection
+}
 
 export type ThemeReveal<T> = {
   setOrigin(point: Point, viewTag?: number): void
@@ -91,6 +95,8 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
       shape: options.shape,
       durations: options.durations,
       wipeDirection: options.wipeDirection,
+      requestedShape: switchOptions?.shape,
+      requestedWipeDirection: switchOptions?.wipeDirection,
     })
     store.set({ held: { id, theme: getTheme() } })
     setTheme(theme)

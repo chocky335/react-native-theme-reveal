@@ -90,4 +90,25 @@ describe('resolveTransition', () => {
       durationMs: 300,
     })
   })
+
+  it('lets the per-call shape and wipe direction beat the factory ones', () => {
+    const star: Shape = { path: 'M0 0L2 0L1 2Z', anchor: { x: 1, y: 1 }, inscribedRadius: 0.5 }
+    expect(
+      resolveTransition({ requested: 'reveal', origin, shape, requestedShape: star }),
+    ).toEqual({ type: 'reveal', origin, durationMs: 450, shape: star })
+    expect(resolveTransition({ requested: 'inverseReveal', origin, requestedShape: star })).toEqual({
+      type: 'inverseReveal',
+      origin,
+      durationMs: 450,
+      shape: star,
+    })
+    expect(
+      resolveTransition({
+        requested: 'wipe',
+        origin: null,
+        wipeDirection: 'left',
+        requestedWipeDirection: 'down',
+      }),
+    ).toEqual({ type: 'wipe', direction: 'down', durationMs: 400 })
+  })
 })

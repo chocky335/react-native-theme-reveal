@@ -7,6 +7,8 @@ export type ResolveTransitionInput = {
   shape?: Shape
   durations?: Partial<Record<TransitionType, number>>
   wipeDirection?: WipeDirection
+  requestedShape?: Shape
+  requestedWipeDirection?: WipeDirection
 }
 
 const DEFAULT_DURATIONS: Record<TransitionType, number> = {
@@ -17,8 +19,10 @@ const DEFAULT_DURATIONS: Record<TransitionType, number> = {
 }
 
 export function resolveTransition(input: ResolveTransitionInput): Transition {
-  const { requested, fallback, origin, shape, durations, wipeDirection } = input
+  const { requested, fallback, origin, durations } = input
   const type = requested ?? fallback ?? (origin ? 'reveal' : 'crossfade')
+  const shape = input.requestedShape ?? input.shape
+  const wipeDirection = input.requestedWipeDirection ?? input.wipeDirection
   const durationOf = (kind: TransitionType) => durations?.[kind] ?? DEFAULT_DURATIONS[kind]
   switch (type) {
     case 'reveal':

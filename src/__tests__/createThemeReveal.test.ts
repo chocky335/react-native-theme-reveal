@@ -235,6 +235,57 @@ describe('transition choice', () => {
     })
     expect(start).toHaveBeenNthCalledWith(2, { type: 'wipe', direction: 'left', durationMs: 250 })
   })
+
+  it('passes a per-switch shape to reveal and inverseReveal', async () => {
+    const shape = { path: 'M0 0L1 1Z', anchor: { x: 0.5, y: 0.5 }, inscribedRadius: 0.4 }
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.setOrigin({ x: 3, y: 4 })
+    await act(() => reveal.switchTo(dark, { transition: 'reveal', shape }))
+    reveal.setOrigin({ x: 5, y: 6 })
+    await act(() => reveal.switchTo(light, { transition: 'inverseReveal', shape }))
+
+    expect(start).toHaveBeenNthCalledWith(1, {
+      type: 'reveal',
+      origin: { x: 3, y: 4 },
+      durationMs: 450,
+      shape,
+    })
+    expect(start).toHaveBeenNthCalledWith(2, {
+      type: 'inverseReveal',
+      origin: { x: 5, y: 6 },
+      durationMs: 450,
+      shape,
+    })
+  })
+
+  it('passes a per-switch wipe direction to the wipe', async () => {
+    const { reveal, mount } = setup({ wipeDirection: 'left' })
+    mount()
+
+    await act(() => reveal.switchTo(dark, { transition: 'wipe', wipeDirection: 'right' }))
+
+    expect(start).toHaveBeenCalledWith({ type: 'wipe', direction: 'right', durationMs: 400 })
+  })
+
+  it('uses the factory shape and wipe direction when the switch has none', async () => {
+    const shape = { path: 'M0 0L1 1Z', anchor: { x: 0.5, y: 0.5 }, inscribedRadius: 0.4 }
+    const { reveal, mount } = setup({ shape, wipeDirection: 'down' })
+    mount()
+
+    reveal.setOrigin({ x: 3, y: 4 })
+    await act(() => reveal.switchTo(dark, { transition: 'reveal' }))
+    await act(() => reveal.switchTo(light, { transition: 'wipe' }))
+
+    expect(start).toHaveBeenNthCalledWith(1, {
+      type: 'reveal',
+      origin: { x: 3, y: 4 },
+      durationMs: 450,
+      shape,
+    })
+    expect(start).toHaveBeenNthCalledWith(2, { type: 'wipe', direction: 'down', durationMs: 400 })
+  })
 })
 
 describe('held theme', () => {
