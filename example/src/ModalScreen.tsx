@@ -1,22 +1,18 @@
-import { useRef } from 'react'
-import { findNodeHandle, Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { GestureResponderEvent } from 'react-native'
-import type { Point } from 'react-native-theme-reveal'
 
 import { Button } from './Button'
-import { SWITCH_BUTTONS } from './reveals'
-import type { SwitchButton } from './reveals'
+import { SWITCH_BUTTONS } from './switches'
+import type { SwitchButton } from './switches'
+import { useModalLinkProbe } from './testLinks'
 import type { Colors } from './theme'
-import type { ModalLink } from './useSwitchLink'
 
 export type ModalPresentation = 'fullScreen' | 'pageSheet' | 'formSheet' | 'transparent'
 
 export const MODAL_PRESENTATIONS: ModalPresentation[] =
   Platform.OS === 'ios' ? ['fullScreen', 'pageSheet', 'formSheet', 'transparent'] : ['fullScreen', 'transparent']
 
-const MODAL_BUTTONS = SWITCH_BUTTONS.filter((button) =>
-  ['Reveal circle', 'Reveal star', 'Inverse reveal', 'Wipe up', 'Crossfade'].includes(button.label),
-)
+const MODAL_BUTTONS = SWITCH_BUTTONS.filter((button) => button.inModal)
 
 type Props = {
   visible: boolean
@@ -26,12 +22,7 @@ type Props = {
   topInset: number
   onSwitch: (button: SwitchButton, event: GestureResponderEvent, view: View | null) => void
   onClose: () => void
-  modalLink: ModalLink | null
-  onModalLinkOrigin: (link: ModalLink, point: Point, viewTag?: number) => void
 }
-
-// Waits for the presentation to settle before a modal link measures the first button.
-const MODAL_LINK_DELAY_MS = 500
 
 export function ModalScreen({
   visible,
@@ -41,31 +32,14 @@ export function ModalScreen({
   topInset,
   onSwitch,
   onClose,
-  modalLink,
-  onModalLinkOrigin,
 }: Props) {
-  const firstButtonRef = useRef<View>(null)
+  const { probeRef, onShow } = useModalLinkProbe()
   const transparent = presentation === 'transparent'
   const sheet = presentation === 'pageSheet' || presentation === 'formSheet'
 
   const onPress = (button: SwitchButton, event: GestureResponderEvent, view: View | null) => {
     onSwitch(button, event, view)
     if (closeOnSelect) onClose()
-  }
-
-  // A modal link measures the first button the way a press reports it (page or window point, 10% from its left
-  // edge, its vertical centre) and switches with the button's view tag.
-  const onShow = () => {
-    if (!modalLink) return
-    setTimeout(() => {
-      const view = firstButtonRef.current
-      if (!view) return
-      const viewTag = findNodeHandle(view) ?? undefined
-      const switchAt = (x: number, y: number, width: number, height: number) =>
-        onModalLinkOrigin(modalLink, { x: x + 0.1 * width, y: y + height / 2 }, viewTag)
-      if (modalLink.measure === 'window') view.measureInWindow(switchAt)
-      else view.measure((_x, _y, width, height, pageX, pageY) => switchAt(pageX, pageY, width, height))
-    }, MODAL_LINK_DELAY_MS)
   }
 
   const content = (
@@ -76,7 +50,7 @@ export function ModalScreen({
       </Text>
       <ScrollView contentContainerStyle={styles.buttons}>
         {MODAL_BUTTONS.map((button, index) => (
-          <View key={button.label} ref={index === 0 ? firstButtonRef : undefined} collapsable={false}>
+          <View key={button.label} ref={index === 0 ? probeRef : undefined} collapsable={false}>
             <Button
               label={button.label}
               colors={colors}
