@@ -114,6 +114,9 @@ class ThemeRevealModule : Module() {
         promise.resolve(false)
         return@capture
       }
+      // Kick off the snapshot's GPU upload now, on the RenderThread, so it doesn't land in the overlay's first
+      // frame.
+      bitmap.prepareToDraw()
       val view = RevealOverlayView(activity, bitmap)
       val params = FrameLayout.LayoutParams(bitmap.width, bitmap.height, Gravity.TOP or Gravity.LEFT).apply {
         leftMargin = snapshot.hostX
