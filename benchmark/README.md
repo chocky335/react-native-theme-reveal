@@ -21,7 +21,9 @@ All three libraries build and run.
   screen. Only the selected library's host is mounted. The Skia canvas mounts with the screen, 1.5 s before the
   press, so creating it isn't part of the run's cost.
 - Runs are interleaved: every round runs each library once, and the starting library rotates from round to round.
-  Each pass begins with one discarded warm-up run per library.
+  Each pass begins with one discarded warm-up run per library. The number of rounds in a pass is a multiple of the
+  library count (6 for three libraries), so every library starts the same number of rounds. The table uses the
+  median of all valid runs, with at least 5 per library.
 - All animation scales (`animator_duration_scale`, `transition_animation_scale`, `window_animation_scale`) have to
   be 1. Any other scale affects the Android animators (ours, theme-switch-animation) but not Reanimated (Skia).
 
@@ -74,7 +76,8 @@ Per run (`runresult.py` writes these into the run's JSON, and `report.py` shows 
     row is skipped. On any other row the frame did finish, so it ends at `SwapBuffersCompleted` instead.
   - Frame time = end - `IntendedVsync`. `p50`, `p90`: linear interpolation between the closest ranks.
   - The window starts at `pressAt` and ends when the frames do: after `endAt`, a frame still belongs to the window
-    as long as its `IntendedVsync` is within two frame intervals of the previous frame.
+    as long as its `IntendedVsync` is within 2.5 frame intervals of the previous frame (so one missed vsync plus
+    jitter stays in).
   - `vsyncMs` (frame interval): the median gap between distinct `IntendedVsync` values in the window, i.e. the
     rate the app actually ran at. That can differ from the display mode: the Mi 11 Lite reports a 90 Hz mode while
     the example draws at 60 Hz (`vsyncMs` 16.6).
@@ -108,10 +111,10 @@ cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
-Run a pass of 5 rounds, then build the table:
+Run a pass of 6 rounds, then build the table:
 
 ```sh
-benchmark/android.sh <serial> 5 ours theme-switch-animation skia
+benchmark/android.sh <serial> 6 ours theme-switch-animation skia
 python3 benchmark/report.py benchmark/results/*.json
 ```
 

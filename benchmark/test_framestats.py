@@ -114,11 +114,26 @@ class SummaryTest(unittest.TestCase):
         summary = framestats.summarize(frames_of(RENDER_THREAD), RT_PRESS, RT_OVERLAY, RT_PRESS + 552.6)
         self.assertEqual(summary['frames'], 29)
 
-    def test_the_window_stops_at_a_gap_of_more_than_two_intervals(self):
+    def test_the_window_stops_at_a_gap_of_more_than_two_and_a_half_intervals(self):
         # End before the first frame (press +107.6 ms): that frame is taken, the next one comes 108
         # ms later.
         summary = framestats.summarize(frames_of(OURS), OURS_PRESS, OURS_OVERLAY, OURS_PRESS + 100)
         self.assertEqual(summary['frames'], 1)
+
+    def gap_window(self, gap_intervals):
+        # 16.7 ms frames from the press to the JS end, then one frame gap_intervals later.
+        interval = 16.7
+        starts = [1000 + interval * n for n in range(10)]
+        starts.append(starts[-1] + gap_intervals * interval)
+        frames = [framestats.Frame(s * 1e6, s * 1e6, (s + 8) * 1e6, (s + 8) * 1e6) for s in starts]
+        return framestats.window(frames, 1000, starts[9], interval)
+
+    def test_the_window_takes_a_frame_just_under_two_and_a_half_intervals_later(self):
+        # One missed vsync (2 intervals) plus jitter stays in the window.
+        self.assertEqual(len(self.gap_window(2.49)), 11)
+
+    def test_the_window_stops_at_a_frame_just_over_two_and_a_half_intervals_later(self):
+        self.assertEqual(len(self.gap_window(2.51)), 10)
 
     def test_the_window_starts_at_the_press(self):
         summary = framestats.summarize(frames_of(REVEAL), 817482745.0, None, 817483200.0)

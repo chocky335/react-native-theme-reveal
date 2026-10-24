@@ -16,7 +16,8 @@ Transition window (all times in CLOCK_MONOTONIC ms, the clock of the touch event
 - --press-ms: the press. --overlay-ms: when JS learned the overlay is in the view tree.
   --end-ms: end of the run in JS.
 - The window starts at the press and ends at the last frame of the burst that runs past --end-ms: after
-  --end-ms, a frame stays in the window while it starts within two frame intervals of the previous one.
+  --end-ms, a frame stays in the window while it starts within 2.5 frame intervals of the previous one
+  (so one missed vsync plus jitter stays in).
 - Without --press-ms, every frame in the dump counts and the press metrics are null.
 
 Output:
@@ -111,7 +112,7 @@ def window(frames, press_ms, end_ms, interval_ms):
     for frame in ordered:
         if frame.intended_vsync_ns <= end_ms * 1e6:
             continue
-        if frame.intended_vsync_ns - last_ns > 2 * interval_ms * 1e6:
+        if frame.intended_vsync_ns - last_ns > 2.5 * interval_ms * 1e6:
             break
         inside.append(frame)
         last_ns = frame.intended_vsync_ns
