@@ -94,11 +94,21 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(summary['vsyncMs'], 16.61)
         self.assertEqual(summary['janky'], 13)
 
-    def test_overlay_frame_ends_at_swap_buffers_completed_of_the_first_frame_after_the_overlay(self):
+    def test_overlay_frame_ends_at_swap_buffers_completed_of_the_first_frame_after_the_press(self):
         ours = framestats.summarize(frames_of(OURS), OURS_PRESS, OURS_OVERLAY, OURS_END)
         self.assertEqual(ours['overlayFrameMs'], 224.9)
         render_thread = framestats.summarize(frames_of(RENDER_THREAD), RT_PRESS, RT_OVERLAY, RT_PRESS + 656.9)
-        self.assertEqual(render_thread['overlayFrameMs'], 156.1)
+        # Its first frame after the press (+84.4 ms) comes before its overlayAt (+97.9 ms).
+        self.assertEqual(render_thread['overlayFrameMs'], 123.4)
+
+    def test_overlay_frame_is_the_first_frame_after_the_press_even_before_overlay_at(self):
+        # theme-switch-animation adds its overlay natively before JS hears about it, so the frame at +20 ms
+        # shows it.
+        press = 1000.0
+        frames = [framestats.Frame((press + s) * 1e6, (press + s) * 1e6, (press + s + 9) * 1e6, (press + s + 8) * 1e6)
+                  for s in (-16.7, 20.0, 36.7, 53.4)]
+        summary = framestats.summarize(frames, press, press + 30, press + 60)
+        self.assertEqual(summary['overlayFrameMs'], 28.0)
 
     def test_missed_vsyncs_and_late_frames(self):
         ours = framestats.summarize(frames_of(OURS), OURS_PRESS, OURS_OVERLAY, OURS_END)

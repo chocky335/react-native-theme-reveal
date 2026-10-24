@@ -60,8 +60,14 @@ Clock: `pressAt`, `overlayAt` and `endAt` are absolute times in ms.
 
 Per run (`runresult.py` writes these into the run's JSON, and `report.py` shows the median over valid runs):
 - `overlayFrameMs` (the main metric) is the time to the first frame with the overlay. `framestats.py` finds the
-  first frame whose `IntendedVsync` is at or after `overlayAt` and measures from `pressAt` to that frame's
+  first frame whose `IntendedVsync` is at or after `pressAt` and measures from `pressAt` to that frame's
   `SwapBuffersCompleted` (or its `FrameCompleted` if `SwapBuffersCompleted` is older than `IntendedVsync`).
+  Nothing draws between the press and the overlay because the Run button has no pressed state, so that frame is
+  the first one with the overlay. On the Mi 11 Lite a system trace (atrace, frames matched by
+  `FrameTimelineVsyncId`) confirmed this for each library. For `ours` and `theme-switch-animation` that frame
+  uploads the full-window snapshot texture, and for `skia` it composites the canvas buffer with the snapshot.
+  `overlayAt` isn't the start, because `theme-switch-animation` adds its overlay natively about 40 ms before JS
+  hears about it, so a frame at or after `overlayAt` was its second drawn frame, about 90 ms late.
 - `snapshotMs`: `overlayAt - pressAt`, the JS side of the same moment.
 - `totalMs`: `endAt - pressAt`.
 - `jsMaxGapMs`: how long the JS thread was blocked. A `requestAnimationFrame` loop runs from `onPress` to the end

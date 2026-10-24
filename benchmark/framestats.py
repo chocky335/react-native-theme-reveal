@@ -24,8 +24,9 @@ Output:
 - frames, p50, p90: count and frame time percentiles (linear interpolation between the closest ranks).
 - vsyncMs: the frame interval the app ran at, the median gap between distinct IntendedVsync values.
 - janky, jankyShare, jankyOverMs: frames longer than vsyncMs rounded to 0.1 ms, as a count and a share.
-- overlayFrameMs: press to SwapBuffersCompleted of the first frame whose IntendedVsync is at or after
-  --overlay-ms (FrameCompleted if SwapBuffersCompleted isn't valid), i.e. the first frame with the overlay.
+- overlayFrameMs: press to SwapBuffersCompleted of the first frame whose IntendedVsync is at or after the
+  press (FrameCompleted if SwapBuffersCompleted isn't valid). That's the first frame with the overlay,
+  since the screen draws nothing else after the press. Null if no frame starts at or after --overlay-ms.
 - missedVsyncs: whole frame intervals from the press to the Vsync of the first frame after the press.
 - lateFrames: frames that started (Vsync) half a frame interval or more after their IntendedVsync, because the
   UI thread was busy.
@@ -146,11 +147,13 @@ def summarize(frames, press_ms=None, overlay_ms=None, end_ms=None):
     summary['lateFrames'] = sum(
         (frame.vsync_ns - frame.intended_vsync_ns) / 1e6 >= interval / 2 for frame in ordered
     )
-    if overlay_ms is not None:
-        first = next((frame for frame in ordered if frame.intended_vsync_ns >= overlay_ms * 1e6), None)
-        if first:
-            shown_ns = first.swap_completed_ns if first.swap_completed_ns >= first.intended_vsync_ns else first.end_ns
-            summary['overlayFrameMs'] = round(shown_ns / 1e6 - press_ms, 1)
+    # The first frame after the press is the overlay frame: the screen draws nothing between press and overlay,
+    # and a library can add its overlay natively before JS hears about it (overlayAt). Still require a frame at
+    # or after overlayAt, so a run whose overlay never drew gets none.
+    if overlay_ms is not None and any(frame.intended_vsync_ns >= overlay_ms * 1e6 for frame in ordered):
+        first = ordered[0]
+        shown_ns = first.swap_completed_ns if first.swap_completed_ns >= first.intended_vsync_ns else first.end_ns
+        summary['overlayFrameMs'] = round(shown_ns / 1e6 - press_ms, 1)
     return summary
 
 
