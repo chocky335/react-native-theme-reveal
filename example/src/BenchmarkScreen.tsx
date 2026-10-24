@@ -4,7 +4,17 @@
 // The BENCH line fields are documented in benchmark/README.md.
 import { useEffect, useRef, useState } from 'react'
 import type { ComponentType } from 'react'
-import { Linking, PixelRatio, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native'
+import {
+  Linking,
+  PixelRatio,
+  Platform,
+  Pressable,
+  Settings,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native'
 import type { GestureResponderEvent } from 'react-native'
 import type { Point } from 'react-native-theme-reveal'
 
@@ -36,6 +46,11 @@ const ROWS = Array.from({ length: 12 }, (_, index) => index + 1)
 // Press timestamps older than this are on a different clock than performance.now().
 const MAX_EVENT_AGE_MS = 1000
 
+// iOS launch argument -benchRuns '<id> <id> ...': taps don't reach the simulator, so each id opens a fresh
+// benchmark screen this far apart and the screen runs itself from the Run button's centre (t0=onPress).
+const LAUNCH_RUN_GAP_MS = 4000
+const AUTO_RUN_DELAY_MS = 1500
+
 const format = (ms: number) => (Number.isFinite(ms) ? ms.toFixed(1) : 'NaN')
 
 // Largest gap between JS frames from `from` until stop().
@@ -57,8 +72,8 @@ function startJsProbe(from: number) {
   }
 }
 
-// Opens the benchmark screen for themereveal-example://bench?lib=<id>.
-export function useBenchmarkLink(open: (id: LibraryId) => void) {
+// Opens the benchmark screen for themereveal-example://bench?lib=<id>, and on iOS for each id of -benchRuns.
+export function useBenchmarkLink(open: (id: LibraryId, autoRun?: boolean) => void) {
   const openRef = useRef(open)
   useEffect(() => {
     openRef.current = open
@@ -71,18 +86,31 @@ export function useBenchmarkLink(open: (id: LibraryId) => void) {
     }
     void Linking.getInitialURL().then(handle)
     const subscription = Linking.addEventListener('url', ({ url }) => handle(url))
-    return () => subscription.remove()
+    const launchRuns = Platform.OS === 'ios' ? Settings.get('benchRuns') : null
+    const timers =
+      typeof launchRuns === 'string'
+        ? launchRuns
+            .split(' ')
+            .map((value) => LIBRARY_IDS.find((id) => id === value))
+            .filter((id) => id !== undefined)
+            .map((id, index) => setTimeout(() => openRef.current(id, true), (index + 1) * LAUNCH_RUN_GAP_MS))
+        : []
+    return () => {
+      subscription.remove()
+      timers.forEach(clearTimeout)
+    }
   }, [])
 }
 
 type Props = {
   library: LibraryId
+  autoRun?: boolean
   topInset: number
   onSelect: (id: LibraryId) => void
   onClose: () => void
 }
 
-export function BenchmarkScreen({ library, topInset, onSelect, onClose }: Props) {
+export function BenchmarkScreen({ library, autoRun, topInset, onSelect, onClose }: Props) {
   const [theme, setTheme] = useState<Theme>('light')
   const themeRef = useRef<Theme>(theme)
   const rootRef = useRef<View>(null)
@@ -105,13 +133,18 @@ export function BenchmarkScreen({ library, topInset, onSelect, onClose }: Props)
       const tapX = Math.round((x + width / 2) * scale)
       const tapY = Math.round((y + height / 2) * scale)
       console.error(`BENCH-READY lib=${library} x=${tapX} y=${tapY}`)
+      if (autoRun) setTimeout(() => runFrom(Number.NaN, x + width / 2, y + height / 2), AUTO_RUN_DELAY_MS)
     })
   }
 
   const onRun = (event: GestureResponderEvent) => {
+    const { timestamp, pageX, pageY } = event.nativeEvent
+    runFrom(timestamp, pageX, pageY)
+  }
+
+  const runFrom = (timestamp: number, pageX: number, pageY: number) => {
     if (running.current) return
     const pressedAt = performance.now()
-    const { timestamp, pageX, pageY } = event.nativeEvent
     const age = pressedAt - timestamp
     const fromEvent = Number.isFinite(age) && age >= 0 && age < MAX_EVENT_AGE_MS
     const t0 = fromEvent ? timestamp : pressedAt

@@ -33,8 +33,11 @@ export default function App() {
   const [measureOnly, setMeasureOnly] = useState(false)
   const [switchOnBackground, setSwitchOnBackground] = useState(false)
   // New key on every open so each benchmark link starts from the same fresh screen.
-  const [benchmark, setBenchmark] = useState<{ library: LibraryId; key: number } | null>(null)
-  const openBenchmark = (library: LibraryId) => setBenchmark({ library, key: Date.now() })
+  const [benchmark, setBenchmark] = useState<{ library: LibraryId; autoRun: boolean; key: number } | null>(
+    null,
+  )
+  const openBenchmark = (library: LibraryId, autoRun = false) =>
+    setBenchmark({ library, autoRun, key: Date.now() })
   useBenchmarkLink(openBenchmark)
 
   // No origin: the switch falls back to a crossfade.
@@ -62,6 +65,7 @@ export default function App() {
         <BenchmarkScreen
           key={benchmark.key}
           library={benchmark.library}
+          autoRun={benchmark.autoRun}
           topInset={TOP_INSET}
           onSelect={openBenchmark}
           onClose={() => setBenchmark(null)}
