@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
+import android.os.Process
 import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
@@ -120,12 +122,34 @@ internal object WindowSnapshot {
         onResult(null)
       }
     }
-    try {
-      PixelCopy.request(window, bitmap, listener, handler)
-    } catch (_: IllegalArgumentException) {
-      bitmap.recycle()
-      onResult(null)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      try {
+        PixelCopy.request(window, bitmap, listener, handler)
+      } catch (_: IllegalArgumentException) {
+        bitmap.recycle()
+        onResult(null)
+      }
+      return
     }
+    // API 26-33: PixelCopy.request blocks the calling thread until the RenderThread has read the window back (40-47
+    // ms for 1080x2400 on a Mi 11 Lite). So the request runs on copyHandler and the main thread stays free. The
+    // listener and all failures still run on handler.
+    copyHandler.post {
+      try {
+        PixelCopy.request(window, bitmap, listener, handler)
+      } catch (_: RuntimeException) {
+        handler.post {
+          bitmap.recycle()
+          onResult(null)
+        }
+      }
+    }
+  }
+
+  private val copyHandler: Handler by lazy {
+    val thread = HandlerThread("ThemeRevealCopy", Process.THREAD_PRIORITY_DISPLAY)
+    thread.start()
+    Handler(thread.looper)
   }
 
   // Both copies run concurrently. onResult fires once, after the second one finishes.
