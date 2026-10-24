@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { AppState, Platform, StatusBar } from 'react-native'
 import { createThemeReveal } from 'react-native-theme-reveal'
 
+import { BenchmarkScreen, useBenchmarkLink } from './src/BenchmarkScreen'
+import type { LibraryId } from './src/BenchmarkScreen'
 import { HomeScreen } from './src/HomeScreen'
 import { switchFromPress } from './src/switches'
 import { TestLinksProvider } from './src/testLinks'
@@ -30,6 +32,10 @@ export default function App() {
   const [followSystem, setFollowSystem] = useState(false)
   const [measureOnly, setMeasureOnly] = useState(false)
   const [switchOnBackground, setSwitchOnBackground] = useState(false)
+  // New key on every open so each benchmark link starts from the same fresh screen.
+  const [benchmark, setBenchmark] = useState<{ library: LibraryId; key: number } | null>(null)
+  const openBenchmark = (library: LibraryId) => setBenchmark({ library, key: Date.now() })
+  useBenchmarkLink(openBenchmark)
 
   // No origin: the switch falls back to a crossfade.
   useFollowSystem(followSystem, (system) => {
@@ -52,17 +58,28 @@ export default function App() {
   return (
     <TestLinksProvider reveal={reveal} getTheme={getTheme}>
       <StatusBar barStyle={(heldTheme ?? theme) === 'light' ? 'dark-content' : 'light-content'} />
-      <HomeScreen
-        theme={theme}
-        colors={colors}
-        topInset={TOP_INSET}
-        followSystem={{ value: followSystem, set: setFollowSystem }}
-        measureOnly={{ value: measureOnly, set: setMeasureOnly }}
-        switchOnBackground={{ value: switchOnBackground, set: setSwitchOnBackground }}
-        onSwitch={(button, event, view) =>
-          void switchFromPress(reveal, getTheme, button, event, view, measureOnly)
-        }
-      />
+      {benchmark ? (
+        <BenchmarkScreen
+          key={benchmark.key}
+          library={benchmark.library}
+          topInset={TOP_INSET}
+          onSelect={openBenchmark}
+          onClose={() => setBenchmark(null)}
+        />
+      ) : (
+        <HomeScreen
+          theme={theme}
+          colors={colors}
+          topInset={TOP_INSET}
+          followSystem={{ value: followSystem, set: setFollowSystem }}
+          measureOnly={{ value: measureOnly, set: setMeasureOnly }}
+          switchOnBackground={{ value: switchOnBackground, set: setSwitchOnBackground }}
+          onSwitch={(button, event, view) =>
+            void switchFromPress(reveal, getTheme, button, event, view, measureOnly)
+          }
+          onOpenBenchmark={() => openBenchmark('ours')}
+        />
+      )}
     </TestLinksProvider>
   )
 }

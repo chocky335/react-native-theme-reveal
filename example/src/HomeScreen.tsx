@@ -20,6 +20,7 @@ type Props = {
   measureOnly: Toggle
   switchOnBackground: Toggle
   onSwitch: (button: SwitchButton, event: GestureResponderEvent, view: View | null) => void
+  onOpenBenchmark: () => void
 }
 
 export function HomeScreen({
@@ -30,6 +31,7 @@ export function HomeScreen({
   measureOnly,
   switchOnBackground,
   onSwitch,
+  onOpenBenchmark,
 }: Props) {
   const [presentation, setPresentation] = useState<ModalPresentation>('fullScreen')
   const [closeOnSelect, setCloseOnSelect] = useState(false)
@@ -104,6 +106,7 @@ export function HomeScreen({
       </View>
       {toggleRow('Close modal on select', { value: closeOnSelect, set: setCloseOnSelect })}
       <Button label="Open modal" colors={colors} onPress={() => setModalVisible(true)} />
+      <Button label="Benchmark" colors={colors} onPress={onOpenBenchmark} />
 
       <ModalScreen
         visible={modalVisible}
