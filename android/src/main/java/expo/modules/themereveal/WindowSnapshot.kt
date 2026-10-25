@@ -125,7 +125,7 @@ internal object WindowSnapshot {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       try {
         PixelCopy.request(window, bitmap, listener, handler)
-      } catch (_: IllegalArgumentException) {
+      } catch (_: RuntimeException) {
         bitmap.recycle()
         onResult(null)
       }
