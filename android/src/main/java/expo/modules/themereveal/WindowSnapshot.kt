@@ -133,10 +133,15 @@ internal object WindowSnapshot {
     }
     // API 26-33: PixelCopy.request blocks the calling thread until the RenderThread has read the window back (40-47
     // ms for 1080x2400 on a Mi 11 Lite). So the request runs on copyHandler and the main thread stays free. The
-    // listener and all failures still run on handler.
+    // listener and all failures still run on handler. The listener is posted to the front of handler's queue: the
+    // readback often finishes right as a vsync arrives, and this way the frame queued for that vsync runs after the
+    // listener, with the overlay, instead of before it (one frame earlier on a Mi 11 Lite).
+    val toFront = PixelCopy.OnPixelCopyFinishedListener { result ->
+      handler.postAtFrontOfQueue { listener.onPixelCopyFinished(result) }
+    }
     copyHandler.post {
       try {
-        PixelCopy.request(window, bitmap, listener, handler)
+        PixelCopy.request(window, bitmap, toFront, copyHandler)
       } catch (_: RuntimeException) {
         handler.post {
           bitmap.recycle()
