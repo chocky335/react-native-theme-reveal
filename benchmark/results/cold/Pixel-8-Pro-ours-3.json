@@ -1,0 +1,38 @@
+{
+  "device": "Pixel-8-Pro",
+  "lib": "ours",
+  "round": 3,
+  "position": 1,
+  "order": [
+    "ours"
+  ],
+  "scales": {
+    "animator_duration_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "window_animation_scale": "1.0"
+  },
+  "snapshotMs": 108.0,
+  "jsMaxGapMs": 50.3,
+  "totalMs": 630.4,
+  "durationMs": 450.0,
+  "pressAt": 563388291.0,
+  "t0": "event",
+  "overlayAt": 563388399.0,
+  "endAt": 563388921.4,
+  "target": "dark",
+  "transition": "reveal",
+  "frames": 29,
+  "p50": 5.9,
+  "p90": 11.76,
+  "vsyncMs": 16.46,
+  "janky": 2,
+  "jankyShare": 0.069,
+  "jankyOverMs": 16.5,
+  "overlayFrameMs": 132.3,
+  "missedVsyncs": 6,
+  "lateFrames": 1,
+  "valid": true,
+  "invalid": [],
+  "bench": "BENCH lib=ours snapshotMs=108.0 jsMaxGapMs=50.3 totalMs=630.4 durationMs=450 pressAt=563388291.0 t0=event overlayAt=563388399.0 endAt=563388921.4 target=dark transition=reveal",
+  "dump": "Pixel-8-Pro-ours-3.txt"
+}

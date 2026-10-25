@@ -1,0 +1,40 @@
+{
+  "device": "M2101K9AG",
+  "lib": "theme-switch-animation",
+  "round": 4,
+  "position": 2,
+  "order": [
+    "ours",
+    "theme-switch-animation",
+    "skia"
+  ],
+  "scales": {
+    "animator_duration_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "window_animation_scale": "1.0"
+  },
+  "snapshotMs": 89.2,
+  "jsMaxGapMs": 44.6,
+  "totalMs": 799.3,
+  "durationMs": 450.0,
+  "pressAt": 826345351.0,
+  "t0": "event",
+  "overlayAt": 826345440.2,
+  "endAt": 826346150.3,
+  "target": "dark",
+  "overlay": "1",
+  "frames": 29,
+  "p50": 21.87,
+  "p90": 25.18,
+  "vsyncMs": 16.87,
+  "janky": 23,
+  "jankyShare": 0.793,
+  "jankyOverMs": 16.9,
+  "overlayFrameMs": 88.2,
+  "missedVsyncs": 3,
+  "lateFrames": 1,
+  "valid": true,
+  "invalid": [],
+  "bench": "BENCH lib=theme-switch-animation snapshotMs=89.2 jsMaxGapMs=44.6 totalMs=799.3 durationMs=450 pressAt=826345351.0 t0=event overlayAt=826345440.2 endAt=826346150.3 target=dark overlay=1",
+  "dump": "M2101K9AG-theme-switch-animation-4.txt"
+}

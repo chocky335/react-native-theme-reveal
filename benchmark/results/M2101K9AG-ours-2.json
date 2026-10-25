@@ -1,0 +1,40 @@
+{
+  "device": "M2101K9AG",
+  "lib": "ours",
+  "round": 2,
+  "position": 3,
+  "order": [
+    "theme-switch-animation",
+    "skia",
+    "ours"
+  ],
+  "scales": {
+    "animator_duration_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "window_animation_scale": "1.0"
+  },
+  "snapshotMs": 76.6,
+  "jsMaxGapMs": 44.9,
+  "totalMs": 585.7,
+  "durationMs": 450.0,
+  "pressAt": 826321318.0,
+  "t0": "event",
+  "overlayAt": 826321394.6,
+  "endAt": 826321903.7,
+  "target": "dark",
+  "transition": "reveal",
+  "frames": 29,
+  "p50": 16.28,
+  "p90": 23.93,
+  "vsyncMs": 16.62,
+  "janky": 10,
+  "jankyShare": 0.345,
+  "jankyOverMs": 16.6,
+  "overlayFrameMs": 108.2,
+  "missedVsyncs": 5,
+  "lateFrames": 0,
+  "valid": true,
+  "invalid": [],
+  "bench": "BENCH lib=ours snapshotMs=76.6 jsMaxGapMs=44.9 totalMs=585.7 durationMs=450 pressAt=826321318.0 t0=event overlayAt=826321394.6 endAt=826321903.7 target=dark transition=reveal",
+  "dump": "M2101K9AG-ours-2.txt"
+}

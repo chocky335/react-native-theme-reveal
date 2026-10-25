@@ -1,0 +1,9 @@
+BENCH lib=ours snapshotMs=9.9 jsMaxGapMs=17.4 totalMs=495.7 durationMs=450 pressAt=565924828.0 t0=onPress overlayAt=565924837.9 endAt=565925323.7 target=dark transition=reveal
+BENCH lib=ours snapshotMs=10.0 jsMaxGapMs=19.4 totalMs=502.4 durationMs=450 pressAt=565966354.3 t0=onPress overlayAt=565966364.3 endAt=565966856.7 target=dark transition=reveal
+BENCH lib=ours snapshotMs=10.0 jsMaxGapMs=21.9 totalMs=499.9 durationMs=450 pressAt=566007757.2 t0=onPress overlayAt=566007767.2 endAt=566008257.1 target=dark transition=reveal
+BENCH lib=theme-switch-animation snapshotMs=14.7 jsMaxGapMs=18.2 totalMs=731.5 durationMs=450 pressAt=565938585.8 t0=onPress overlayAt=565938600.5 endAt=565939317.2 target=dark overlay=1
+BENCH lib=theme-switch-animation snapshotMs=27.1 jsMaxGapMs=16.9 totalMs=743.8 durationMs=450 pressAt=565980173.4 t0=onPress overlayAt=565980200.5 endAt=565980917.2 target=dark overlay=1
+BENCH lib=theme-switch-animation snapshotMs=10.4 jsMaxGapMs=16.9 totalMs=727.2 durationMs=450 pressAt=566021540.1 t0=onPress overlayAt=566021550.5 endAt=566022267.2 target=dark overlay=1
+BENCH lib=skia snapshotMs=43.0 jsMaxGapMs=18.6 totalMs=533.4 durationMs=450 pressAt=565952417.2 t0=onPress overlayAt=565952460.2 endAt=565952950.6 target=dark overlay=1
+BENCH lib=skia snapshotMs=44.6 jsMaxGapMs=18.6 totalMs=866.6 durationMs=450 pressAt=565993934.0 t0=onPress overlayAt=565993978.5 endAt=565994800.5 target=dark overlay=1
+BENCH lib=skia snapshotMs=47.5 jsMaxGapMs=18.2 totalMs=533.3 durationMs=450 pressAt=566035317.3 t0=onPress overlayAt=566035364.8 endAt=566035850.6 target=dark overlay=1

@@ -1,6 +1,7 @@
 # Benchmark
 
-This compares three ways to animate a theme switch, all in one release build of the example app:
+This compares three ways to animate a theme switch, all in one release build of the example app. Results are in
+`RESULTS.md`.
 
 | id | Library | Switch |
 |---|---|---|
@@ -135,6 +136,17 @@ python3 benchmark/report.py benchmark/results/*.json
   already hold the lease). If the file named by `BENCH_PAUSED_FILE` exists, the pass stops.
 - `report.py` prints a row per device and library. `Runs` shows valid / all, every metric column is the median
   over valid runs, and `Overlay frame` is the column that decides pass/fail.
+
+## Run it (iOS simulator)
+
+Scripts can't tap on the simulator, so a launch argument drives the benchmark instead. Each id opens a fresh
+benchmark screen 4 s after the previous one, and the screen starts its own run 1.5 s after layout, from the Run
+button's centre (`t0=onPress`):
+
+```sh
+xcrun simctl launch <udid> expo.modules.themereveal.example -benchRuns 'ours theme-switch-animation skia'
+xcrun simctl spawn <udid> log stream --style compact --predicate 'eventMessage CONTAINS "BENCH"'
+```
 
 ## Tests
 
