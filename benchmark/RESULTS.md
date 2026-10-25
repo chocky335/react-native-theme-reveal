@@ -9,7 +9,7 @@ Measured on 2026-10-25. See `benchmark/README.md` for what each metric means and
 | Model | `M2101K9AG` | `Pixel 8 Pro` | iPhone 17 Pro simulator on a Mac |
 | OS | Android 13 (API 33), MIUI | Android 17 (API 37) | iOS 26.5 |
 | Screen | 1080 x 2400 | 1008 x 2244 | - |
-| Rate the app drew at | 60 Hz (16.6 ms) | 60 Hz (16.4-16.6 ms), Skia 30 Hz | - |
+| Rate the app drew at | 60 Hz (16.6 ms) | 60 Hz (16.4-16.6 ms), Skia 30 Hz; below the 120 Hz panel default, cause unknown | - |
 | Build | release, `arm64-v8a` | release, `arm64-v8a` | Release, simulator |
 | Runs per library | 1 warm-up + 6 interleaved rounds, 6/6 valid | 1 warm-up + 6 interleaved rounds, 6/6 valid | 1 warm-up + 6 interleaved rounds |
 | Animation scales | 1.0 / 1.0 / 1.0 | 1.0 / 1.0 / 1.0 | - |
@@ -55,30 +55,35 @@ alternative's median. Lower is better for all metrics.
 | Mi 11 Lite | Late frames | 1 | 1 (skia) | 1.1 | PASS |
 | Mi 11 Lite | Missed vsyncs | 4 | 4 (theme-switch-animation) | 4.2 | PASS |
 | Mi 11 Lite | JS max gap (ms) | 39.0 | 37.0 (theme-switch-animation) | 38.9 | FAIL |
-| Pixel 8 Pro | Overlay frame (ms) | 72.3 | 62.8 (theme-switch-animation) | 66.0 | FAIL |
+| Pixel 8 Pro | Overlay frame (ms) (1) | 72.3 | 62.8 (theme-switch-animation) | 66.0 | FAIL |
 | Pixel 8 Pro | Snapshot, JS (ms) | 60.1 | 58.1 (theme-switch-animation) | 61.1 | PASS |
-| Pixel 8 Pro | Frame p50 (ms) | 5.6 | 7.1 (skia) | 7.5 | PASS |
-| Pixel 8 Pro | Frame p90 (ms) | 8.0 | 9.6 (theme-switch-animation) | 10.1 | PASS |
-| Pixel 8 Pro | Janky (%) | 0 | 0 (skia) | 0 | PASS |
-| Pixel 8 Pro | Late frames | 0 | 0 (skia) | 0 | PASS |
+| Pixel 8 Pro | Frame p50 (ms) (2) | 5.6 | 8.3 (theme-switch-animation) | 8.7 | PASS |
+| Pixel 8 Pro | Frame p90 (ms) (2) | 8.0 | 9.6 (theme-switch-animation) | 10.1 | PASS |
+| Pixel 8 Pro | Janky (%) (2) | 0 | 5 (theme-switch-animation) | 5 | PASS |
+| Pixel 8 Pro | Late frames (2) | 0 | 1 (theme-switch-animation) | 1.1 | PASS |
 | Pixel 8 Pro | Missed vsyncs | 4 | 3 (theme-switch-animation) | 3.2 | FAIL |
 | Pixel 8 Pro | JS max gap (ms) | 28.0 | 25.1 (theme-switch-animation) | 26.4 | FAIL |
+
+(1) Rule confirmed by trace on the Mi only (no atrace on Android 17). See "Notes on the metrics". (2) Skia is left
+out of these Pixel rows because it drew at 30 Hz there, so its frame times and its janky and late thresholds can't
+be compared. Ours passes them against Skia too.
 
 - Mi 11 Lite: ours wins the overlay frame by 7%. It fails one metric, the JS max gap: 39.0 ms against a limit of
   38.9 ms (+5.4%). Between passes this metric moved by more than that (ours 40.5 / 45.2 / 39.0 ms,
   theme-switch-animation 42.0 / 44.1 / 37.0 ms).
 - Pixel 8 Pro: ours loses to `theme-switch-animation` on time to the first overlay frame (+15%), missed vsyncs
-  (one frame interval) and JS max gap (+12%), and wins or ties everything else.
+  (one frame interval) and JS max gap (+12%), and passes everything else.
 
 ### Cause of the remaining loss
 
 - Ours reads the window back from the GPU with `PixelCopy`. On the Mi that readback (`copySurfaceInto` on the
   RenderThread) takes 25-47 ms for a 1080 x 2400 window. A `simpleperf` cycle profile only finds about 3 ms of CPU
   cycles in it, so most of the time is spent waiting on the GPU.
-- `theme-switch-animation` draws the view tree in software into a bitmap on the React Native native-modules
-  thread, off the main thread, and then attaches an `ImageView`. That draw isn't thread-safe, though, and it
-  misses hardware-only content (shadows that only a `RenderNode` draws, for example). Ours sticks with the
-  pixel-exact GPU readback.
+- `theme-switch-animation` draws the view tree into a software `Canvas` backed by a new bitmap
+  (`rootView.draw(canvas)`, `ThemeSwitchAnimationModule.java:101-105` in its 0.8.0 Android source), called from
+  the `@ReactMethod` `freezeScreen` (`:35-41`), and then attaches an `ImageView`. In the Mi trace that draw runs
+  on `mqt_v_native`, the React Native native-modules thread, off the main thread. Ours sticks with the GPU
+  readback, which I checked earlier and found pixel-exact.
 - Pixel 8 Pro: I couldn't take a system trace (see below). According to `gfxinfo`, both libraries draw the overlay
   frame in about 5 ms, and our first overlay frame starts about one frame later. `PixelCopy` is already
   asynchronous on API 34 and later, so the likely cause is the same readback latency, up against a fast software
@@ -86,18 +91,20 @@ alternative's median. Lower is better for all metrics.
 
 ### Fixes in this pass
 
-Mi 11 Lite, 6 rounds each (ours / theme-switch-animation):
+Mi 11 Lite, 6 rounds each (ours / theme-switch-animation). Only the final row has its raw runs in `results/`. I
+didn't publish raw runs for the others.
 
 | Pass | Overlay frame (ms) | Snapshot, JS (ms) | Missed vsyncs | JS max gap (ms) |
 |---|---|---|---|---|
-| Before the fixes | 118.3 / 90.0 | 76.8 / 71.6 | 5 / 4 | 50.5 / 51.0 |
-| 1. `perf(android): take the window snapshot off the main thread` | 109.3 / 90.6 | 74.8 / 80.7 | 4.5 / 3.5 | 47.8 / 50.7 |
-| 2. `perf(android): upload the snapshot before the overlay's first frame` | 90.8 / 81.0 | 73.7 / 71.6 | 4 / 3 | 40.5 / 42.0 |
-| 3. Trial build: listener at the front of the main queue on every API level | 77.7 / 90.2 | 64.1 / 70.4 | 3 / 4 | 45.2 / 44.1 |
+| Before the fixes (raw runs not published) | 118.3 / 90.0 | 76.8 / 71.6 | 5 / 4 | 50.5 / 51.0 |
+| 1. `perf(android): take the window snapshot off the main thread` (raw runs not published) | 109.3 / 90.6 | 74.8 / 80.7 | 4.5 / 3.5 | 47.8 / 50.7 |
+| 2. `perf(android): upload the snapshot before the overlay's first frame` (raw runs not published) | 90.8 / 81.0 | 73.7 / 71.6 | 4 / 3 | 40.5 / 42.0 |
+| 3. Trial build: listener at the front of the main queue on every API level (raw runs not published) | 77.7 / 90.2 | 64.1 / 70.4 | 3 / 4 | 45.2 / 44.1 |
 | 3. `perf(android): attach the overlay before a pending frame on API 26-33` (final) | 84.8 / 91.4 | 72.6 / 80.4 | 4 / 4 | 39.0 / 37.0 |
 
 Pixel 8 Pro, overlay frame (ours / theme-switch-animation): 68.3 / 62.2 ms after fix 2, 70.5 / 61.4 ms with the
-trial build, and 72.3 / 62.8 ms final. Fix 3 didn't help on API 34+, so it's limited to API 26-33.
+trial build (raw runs not published for either), and 72.3 / 62.8 ms final. Fix 3 didn't help on API 34+, so it's
+limited to API 26-33.
 
 1. On API 26-33, `PixelCopy.request` blocks the calling thread for the whole readback. Ours used to call it on the
    main thread, blocking it for 41-47 ms. The request now runs on a background `HandlerThread`.
@@ -153,12 +160,16 @@ on this platform" for the simulator. The BENCH lines are in `results/ios-simulat
   `theme-switch-animation` upload the full-window snapshot texture in it, and Skia composites its canvas buffer.
   The earlier rule (first frame at or after the JS overlay time) picked the second drawn frame of
   `theme-switch-animation`, about 88 ms late.
-- Pixel 8 Pro: No system trace was possible. `atrace` reports "Did not find trace folder", and a Perfetto session
-  got no ftrace events. The `gfxinfo` data agrees with the Mi. For ours and Skia the first frame starts 5-36 ms
-  after the JS overlay time on every run, so both rules pick the same frame. For `theme-switch-animation` it
-  starts 1-3 ms before it, and its sync phase is 1.4-2.6 ms vs 0.2-0.5 ms for the other two, which fits the upload
-  of its bitmap.
-- No run had its first frame more than 150 ms before the JS overlay time (`overlayLeadMs`, largest 19.2 ms).
+- Pixel 8 Pro: the rule is confirmed by trace on the Mi only (no atrace on Android 17). No system trace was
+  possible. `atrace` reports "Did not find trace folder", and a Perfetto session got no ftrace events. The
+  `gfxinfo` data agrees with the Mi. For ours and Skia the first frame starts 5-36 ms after the JS overlay time on
+  every run, so both rules pick the same frame. For `theme-switch-animation` it starts 1-3 ms before it, and its
+  sync phase is 1.4-2.6 ms vs 0.2-0.5 ms for the other two, which fits the upload of its bitmap.
+- No run had its first frame more than 150 ms before the JS overlay time (`overlayLeadMs`, largest 19.2 ms). That
+  check only catches gross errors, though: a first frame one interval too early (16.7 ms at 60 Hz) stays under it.
+- The Pixel 8 Pro drew at 60 Hz in these passes, below its 120 Hz panel default (an earlier run measured 120 Hz on
+  the same phone). I haven't found out why. Ours and theme-switch-animation drew at the same rate, so the
+  comparison holds, but one frame costs 16.7 ms here instead of 8.3 ms.
 - With the threshold at the frame interval, Janky (%) is high for every library on the Mi (47-68%). HWUI pipelines
   frames, so a frame that takes longer than one interval isn't necessarily dropped. Late frames and missed vsyncs
   are a better signal for real drops.

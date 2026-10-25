@@ -65,14 +65,16 @@ Per run (`runresult.py` writes these into the run's JSON, and `report.py` shows 
   `SwapBuffersCompleted` (or its `FrameCompleted` if `SwapBuffersCompleted` is older than `IntendedVsync`).
   Nothing draws between the press and the overlay because the Run button has no pressed state, so that frame is
   the first one with the overlay. On the Mi 11 Lite a system trace (atrace, frames matched by
-  `FrameTimelineVsyncId`) confirmed this for each library. For `ours` and `theme-switch-animation` that frame
-  uploads the full-window snapshot texture, and for `skia` it composites the canvas buffer with the snapshot. Why
-  not use `overlayAt` directly? The first version of the rule took the first frame at or after `overlayAt`, but
+  `FrameTimelineVsyncId`) confirmed this for each library. Only the Mi was confirmed by trace, since there's no
+  atrace on Android 17 and so none on the Pixel 8 Pro. For `ours` and `theme-switch-animation` that frame uploads
+  the full-window snapshot texture, and for `skia` it composites the canvas buffer with the snapshot. Why not use
+  `overlayAt` directly? The first version of the rule took the first frame at or after `overlayAt`, but
   `theme-switch-animation` attaches its overlay natively about 40 ms before JS hears about it, so that rule picked
   its second drawn frame, about 88 ms late. `snapshotMs` keeps the JS moment as a secondary column. The Run button
   draws no press feedback (it's a `Pressable` with a fixed style: no ripple, no opacity, no pressed style), so a
   feedback frame can't sneak in first. A run whose first frame starts more than 150 ms before `overlayAt` doesn't
-  count (`overlayLeadMs`, below), since that frame probably isn't the overlay.
+  count (`overlayLeadMs`, below), since that frame probably isn't the overlay. This check only catches gross
+  errors, though: a first frame one interval too early (16.7 ms at 60 Hz) stays far below 150 ms.
 - `overlayLeadMs`: how far ahead of `overlayAt` the overlay frame starts (`IntendedVsync`), negative if it starts
   after.
 - `snapshotMs`: `overlayAt - pressAt`, the JS side of the same moment.
