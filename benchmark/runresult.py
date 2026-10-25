@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import framestats  # noqa: E402
 
 SCALE_NAMES = ('animator_duration_scale', 'transition_animation_scale', 'window_animation_scale')
+# A first frame starting this long before overlayAt probably isn't the overlay frame.
+OVERLAY_LEAD_LIMIT_MS = 150
 NUMBERS = ('snapshotMs', 'jsMaxGapMs', 'totalMs', 'durationMs', 'pressAt', 'overlayAt', 'endAt')
 
 
@@ -57,6 +59,8 @@ def invalid_reasons(bench, scales, has_profile_data, frames):
         reasons.append('no overlay')
     if frames['overlayFrameMs'] is None:
         reasons.append('no frame after the overlay')
+    elif frames['overlayLeadMs'] > OVERLAY_LEAD_LIMIT_MS:
+        reasons.append(f"first frame {frames['overlayLeadMs']} ms before overlayAt: probably not the overlay")
     return reasons
 
 

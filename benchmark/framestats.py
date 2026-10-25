@@ -27,6 +27,7 @@ Output:
 - overlayFrameMs: press to SwapBuffersCompleted of the first frame whose IntendedVsync is at or after the
   press (FrameCompleted if SwapBuffersCompleted isn't valid). That's the first frame with the overlay,
   since the screen draws nothing else after the press. Null if no frame starts at or after --overlay-ms.
+- overlayLeadMs: how far that frame starts (IntendedVsync) before --overlay-ms, negative if it starts after.
 - missedVsyncs: whole frame intervals from the press to the Vsync of the first frame after the press.
 - lateFrames: frames that started (Vsync) half a frame interval or more after their IntendedVsync, because the
   UI thread was busy.
@@ -137,6 +138,7 @@ def summarize(frames, press_ms=None, overlay_ms=None, end_ms=None):
         'jankyShare': round(janky / len(times), 3) if times and janky is not None else None,
         'jankyOverMs': threshold,
         'overlayFrameMs': None,
+        'overlayLeadMs': None,
         'missedVsyncs': None,
         'lateFrames': None,
     }
@@ -154,6 +156,7 @@ def summarize(frames, press_ms=None, overlay_ms=None, end_ms=None):
         first = ordered[0]
         shown_ns = first.swap_completed_ns if first.swap_completed_ns >= first.intended_vsync_ns else first.end_ns
         summary['overlayFrameMs'] = round(shown_ns / 1e6 - press_ms, 1)
+        summary['overlayLeadMs'] = round(overlay_ms - first.intended_vsync_ns / 1e6, 1)
     return summary
 
 

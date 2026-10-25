@@ -2,7 +2,8 @@
 
 Markdown comparison table from the per-run JSON files that android.sh writes: one row per device and library,
 with the median of each metric over the valid runs. Runs shows valid / all. A run that doesn't count
-(runresult.py: invalid) is left out of every median. "Overlay frame" is the column that decides pass/fail.
+(runresult.py: invalid) is left out of every median and listed under the table with its reasons.
+"Overlay frame" is the column that decides pass/fail.
 """
 
 import json
@@ -59,12 +60,25 @@ def table(runs):
     return '\n'.join(lines)
 
 
+def excluded(runs):
+    """Runs left out of the medians, with their reasons."""
+    lines = [
+        f"- {run['device']} {run['lib']} round {run.get('round', '?')}: " + '; '.join(run.get('invalid', []))
+        for run in runs
+        if not run.get('valid')
+    ]
+    return '\n'.join(['Runs that do not count:'] + lines) if lines else ''
+
+
 def main():
     runs = []
     for path in sys.argv[1:]:
         with open(path) as file:
             runs.append(json.load(file))
     print(table(runs))
+    note = excluded(runs)
+    if note:
+        print('\n' + note)
 
 
 if __name__ == '__main__':

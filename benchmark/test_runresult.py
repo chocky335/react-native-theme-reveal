@@ -68,6 +68,12 @@ class ValidityTest(unittest.TestCase):
         bench = OURS_BENCH.replace('lib=ours', 'lib=skia').replace('transition=reveal', 'overlay=0')
         self.assertIn('no overlay', build(bench=bench)['invalid'])
 
+    def test_a_first_frame_long_before_overlay_at(self):
+        # The first frame after the press (+107.6 ms) starts 192.4 ms before this overlayAt (+300 ms).
+        result = build(bench=OURS_BENCH.replace('overlayAt=821549638.3', 'overlayAt=821549845.0'))
+        self.assertIn('first frame 192.4 ms before overlayAt: probably not the overlay', result['invalid'])
+        self.assertEqual(build()['invalid'], [])
+
     def test_press_time_not_on_the_frame_clock(self):
         result = build(bench=OURS_BENCH.replace('t0=event', 't0=onPress'))
         self.assertIn('the press time is not on the frame clock', result['invalid'])

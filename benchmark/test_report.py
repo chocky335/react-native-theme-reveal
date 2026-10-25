@@ -58,6 +58,14 @@ class ReportTest(unittest.TestCase):
         libs = [line.split(' | ')[1] for line in report.table(runs).splitlines()[2:]]
         self.assertEqual(libs, ['ours', 'theme-switch-animation', 'skia'])
 
+    def test_lists_the_runs_that_do_not_count(self):
+        flagged = dict(run('M2101K9AG', 'ours', 10.0, valid=False), round=3, invalid=['no overlay', 'no BENCH line'])
+        self.assertEqual(
+            report.excluded([run('M2101K9AG', 'ours', 100.0), flagged]),
+            'Runs that do not count:\n- M2101K9AG ours round 3: no overlay; no BENCH line',
+        )
+        self.assertEqual(report.excluded([run('M2101K9AG', 'ours', 100.0)]), '')
+
     def test_cli_reads_result_files(self):
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, 'M2101K9AG-ours-1.json')

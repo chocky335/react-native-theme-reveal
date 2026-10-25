@@ -66,9 +66,15 @@ Per run (`runresult.py` writes these into the run's JSON, and `report.py` shows 
   Nothing draws between the press and the overlay because the Run button has no pressed state, so that frame is
   the first one with the overlay. On the Mi 11 Lite a system trace (atrace, frames matched by
   `FrameTimelineVsyncId`) confirmed this for each library. For `ours` and `theme-switch-animation` that frame
-  uploads the full-window snapshot texture, and for `skia` it composites the canvas buffer with the snapshot.
-  `overlayAt` isn't the start, because `theme-switch-animation` adds its overlay natively about 40 ms before JS
-  hears about it, so a frame at or after `overlayAt` was its second drawn frame, about 90 ms late.
+  uploads the full-window snapshot texture, and for `skia` it composites the canvas buffer with the snapshot. Why
+  not use `overlayAt` directly? The first version of the rule took the first frame at or after `overlayAt`, but
+  `theme-switch-animation` attaches its overlay natively about 40 ms before JS hears about it, so that rule picked
+  its second drawn frame, about 88 ms late. `snapshotMs` keeps the JS moment as a secondary column. The Run button
+  draws no press feedback (it's a `Pressable` with a fixed style: no ripple, no opacity, no pressed style), so a
+  feedback frame can't sneak in first. A run whose first frame starts more than 150 ms before `overlayAt` doesn't
+  count (`overlayLeadMs`, below), since that frame probably isn't the overlay.
+- `overlayLeadMs`: how far ahead of `overlayAt` the overlay frame starts (`IntendedVsync`), negative if it starts
+  after.
 - `snapshotMs`: `overlayAt - pressAt`, the JS side of the same moment.
 - `totalMs`: `endAt - pressAt`.
 - `jsMaxGapMs`: how long the JS thread was blocked. A `requestAnimationFrame` loop runs from `onPress` to the end
@@ -103,7 +109,10 @@ A run doesn't count (`valid: false`, reasons in `invalid`) if:
 - `totalMs` is less than `durationMs`;
 - `ours` settled with a transition other than `reveal` (`prepare` showed no overlay), or `skia` logged
   `overlay=0` (`makeImageFromView` returned null);
-- no frame came at or after `overlayAt`.
+- no frame came at or after `overlayAt`;
+- the first frame after the press starts more than 150 ms before `overlayAt`.
+
+`report.py` lists the runs that didn't count under the table, along with why.
 
 ## Run it (Android)
 

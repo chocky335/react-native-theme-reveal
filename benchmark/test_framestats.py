@@ -110,6 +110,14 @@ class SummaryTest(unittest.TestCase):
         summary = framestats.summarize(frames, press, press + 30, press + 60)
         self.assertEqual(summary['overlayFrameMs'], 28.0)
 
+    def test_overlay_lead_is_how_far_the_first_frame_starts_before_overlay_at(self):
+        # Oracle (awk over the fixtures): first frame after the press at +84.4 ms (theme-switch-animation,
+        # overlayAt +97.9) and at +107.6 ms (ours, overlayAt +93.3).
+        render_thread = framestats.summarize(frames_of(RENDER_THREAD), RT_PRESS, RT_OVERLAY, RT_PRESS + 656.9)
+        self.assertEqual(render_thread['overlayLeadMs'], 13.5)
+        ours = framestats.summarize(frames_of(OURS), OURS_PRESS, OURS_OVERLAY, OURS_END)
+        self.assertEqual(ours['overlayLeadMs'], -14.3)
+
     def test_missed_vsyncs_and_late_frames(self):
         ours = framestats.summarize(frames_of(OURS), OURS_PRESS, OURS_OVERLAY, OURS_END)
         self.assertEqual(ours['missedVsyncs'], 11)
@@ -162,6 +170,7 @@ class SummaryTest(unittest.TestCase):
                 'jankyShare': None,
                 'jankyOverMs': None,
                 'overlayFrameMs': None,
+                'overlayLeadMs': None,
                 'missedVsyncs': None,
                 'lateFrames': None,
             },
