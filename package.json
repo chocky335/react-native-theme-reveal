@@ -1,6 +1,6 @@
 {
   "name": "react-native-theme-reveal",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Animate React Native theme switches from a native window snapshot",
   "main": "build/index.js",
   "types": "build/index.d.ts",
