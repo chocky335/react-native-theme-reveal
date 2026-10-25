@@ -142,7 +142,8 @@ internal object WindowSnapshot {
     // Off main, PixelCopy.request(window) reads peekDecorView().getViewRootImpl(), its mSurface (final field, Surface
     // locks internally), mWindowAttributes.surfaceInsets and mWidth/mHeight. A stale read means either a failed copy
     // (invalid surface throws, caught below, or the listener gets an error) or a size mismatch (Motion.sameSize in
-    // start drops the overlay), and both go down the existing failure path.
+    // start drops the overlay), and both go down the existing failure path. postAtFrontOfQueue jumps the main queue
+    // with one short message per switch (the result: one addView, one resolve).
     copyHandler.post {
       try {
         PixelCopy.request(window, bitmap, toFront, copyHandler)
