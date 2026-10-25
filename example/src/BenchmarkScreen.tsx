@@ -116,6 +116,8 @@ export function BenchmarkScreen({ library, autoRun, topInset, onSelect, onClose 
   const rootRef = useRef<View>(null)
   const runRef = useRef<View>(null)
   const running = useRef(false)
+  const autoRunTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(autoRunTimer.current), [])
   const [hostProps] = useState<HostProps>(() => ({
     getTheme: () => themeRef.current,
     setTheme: (next) => {
@@ -133,7 +135,12 @@ export function BenchmarkScreen({ library, autoRun, topInset, onSelect, onClose 
       const tapX = Math.round((x + width / 2) * scale)
       const tapY = Math.round((y + height / 2) * scale)
       console.error(`BENCH-READY lib=${library} x=${tapX} y=${tapY}`)
-      if (autoRun) setTimeout(() => runFrom(Number.NaN, x + width / 2, y + height / 2), AUTO_RUN_DELAY_MS)
+      if (!autoRun) return
+      clearTimeout(autoRunTimer.current)
+      autoRunTimer.current = setTimeout(
+        () => runFrom(Number.NaN, x + width / 2, y + height / 2),
+        AUTO_RUN_DELAY_MS,
+      )
     })
   }
 
