@@ -64,13 +64,13 @@ alternative's median. Lower is better for all metrics.
 | Pixel 8 Pro | Missed vsyncs | 4 | 3 (theme-switch-animation) | 3.2 | FAIL |
 | Pixel 8 Pro | JS max gap (ms) | 28.0 | 25.1 (theme-switch-animation) | 26.4 | FAIL |
 
-(1) Rule confirmed by trace on the Mi only (no atrace on Android 17). See "Notes on the metrics". (2) Skia is left
-out of these Pixel rows because it drew at 30 Hz there, so its frame times and its janky and late thresholds can't
-be compared. Ours passes them against Skia too.
+(1) Rule confirmed by trace on the Mi only, and on the Pixel by gfxinfo sync-phase agreement (no atrace on Android
+17). See "Notes on the metrics". (2) Skia is left out of these Pixel rows because it drew at 30 Hz there, so its
+frame times and its janky and late thresholds can't be compared. Ours passes them against Skia too.
 
-- Mi 11 Lite: ours wins the overlay frame by 7%. It fails one metric, the JS max gap: 39.0 ms against a limit of
-  38.9 ms (+5.4%). Between passes this metric moved by more than that (ours 40.5 / 45.2 / 39.0 ms,
-  theme-switch-animation 42.0 / 44.1 / 37.0 ms).
+- Mi 11 Lite: ours wins the overlay frame by 7%. The JS max gap fails: 39.0 ms vs 37.0 ms is +5.4%, over the 5%
+  limit (38.9 ms). The difference is within the spread between passes (ours 40.5 / 45.2 / 39.0 ms,
+  theme-switch-animation 42.0 / 44.1 / 37.0 ms), but it still counts as a FAIL. All the other Mi metrics pass.
 - Pixel 8 Pro: ours loses to `theme-switch-animation` on time to the first overlay frame (+15%), missed vsyncs
   (one frame interval) and JS max gap (+12%), and passes everything else.
 
@@ -160,11 +160,12 @@ on this platform" for the simulator. The BENCH lines are in `results/ios-simulat
   `theme-switch-animation` upload the full-window snapshot texture in it, and Skia composites its canvas buffer.
   The earlier rule (first frame at or after the JS overlay time) picked the second drawn frame of
   `theme-switch-animation`, about 88 ms late.
-- Pixel 8 Pro: the rule is confirmed by trace on the Mi only (no atrace on Android 17). No system trace was
-  possible. `atrace` reports "Did not find trace folder", and a Perfetto session got no ftrace events. The
-  `gfxinfo` data agrees with the Mi. For ours and Skia the first frame starts 5-36 ms after the JS overlay time on
-  every run, so both rules pick the same frame. For `theme-switch-animation` it starts 1-3 ms before it, and its
-  sync phase is 1.4-2.6 ms vs 0.2-0.5 ms for the other two, which fits the upload of its bitmap.
+- Pixel 8 Pro: the rule is confirmed by trace on the Mi only, and on the Pixel by gfxinfo sync-phase agreement (no
+  atrace on Android 17). No system trace was possible. `atrace` reports "Did not find trace folder", and a
+  Perfetto session got no ftrace events. The `gfxinfo` data agrees with the Mi. For ours and Skia the first frame
+  starts 5-36 ms after the JS overlay time on every run, so both rules pick the same frame. For
+  `theme-switch-animation` it starts 1-3 ms before it, and its sync phase is 1.4-2.6 ms vs 0.2-0.5 ms for the
+  other two, which fits the upload of its bitmap.
 - No run had its first frame more than 150 ms before the JS overlay time (`overlayLeadMs`, largest 19.2 ms). That
   check only catches gross errors, though: a first frame one interval too early (16.7 ms at 60 Hz) stays under it.
 - The Pixel 8 Pro drew at 60 Hz in these passes, below its 120 Hz panel default (an earlier run measured 120 Hz on
