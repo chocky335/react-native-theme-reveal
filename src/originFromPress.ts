@@ -12,8 +12,7 @@ export function originFromPress(
   event: GestureResponderEvent,
   fallbackView?: MeasurableView | null,
 ): Promise<PressOrigin | null> {
-  const { pageX, pageY, target }: { pageX?: unknown; pageY?: unknown; target?: unknown } =
-    event.nativeEvent
+  const { pageX, pageY, target }: { pageX?: unknown; pageY?: unknown; target?: unknown } = event.nativeEvent
   const tag = typeof target === 'number' ? { viewTag: target } : {}
 
   if (typeof pageX === 'number' && typeof pageY === 'number') {

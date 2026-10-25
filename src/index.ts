@@ -4,10 +4,5 @@ export { originFromPress } from './originFromPress'
 export type { MeasurableView, PressOrigin } from './originFromPress'
 export { resolveTransition } from './resolveTransition'
 export type { ResolveTransitionInput } from './resolveTransition'
-export type {
-  SettledInfo,
-  SwitchOptions,
-  ThemeReveal,
-  ThemeRevealOptions,
-} from './createThemeReveal'
+export type { SettledInfo, SwitchOptions, ThemeReveal, ThemeRevealOptions } from './createThemeReveal'
 export type { Point, Shape, Transition, TransitionType, WipeDirection } from './types'

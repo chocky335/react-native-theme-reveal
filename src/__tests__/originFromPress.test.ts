@@ -44,6 +44,8 @@ describe('originFromPress', () => {
 
   it('returns null without a touch point and without a fallback view', async () => {
     await expect(originFromPress(pressEvent({}))).resolves.toBeNull()
-    await expect(originFromPress(pressEvent({ pageX: undefined, pageY: undefined }), null)).resolves.toBeNull()
+    await expect(
+      originFromPress(pressEvent({ pageX: undefined, pageY: undefined }), null),
+    ).resolves.toBeNull()
   })
 })
