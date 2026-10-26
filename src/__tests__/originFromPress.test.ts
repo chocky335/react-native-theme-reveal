@@ -48,4 +48,18 @@ describe('originFromPress', () => {
       originFromPress(pressEvent({ pageX: undefined, pageY: undefined }), null),
     ).resolves.toBeNull()
   })
+
+  it.each([
+    [NaN, 512],
+    [37, Infinity],
+    [-Infinity, 512],
+  ])('ignores a non-finite touch point (%p, %p)', async (pageX, pageY) => {
+    const event = pressEvent({ pageX, pageY, target: 42 })
+
+    await expect(originFromPress(event, viewAt(10, 480, 200, 64))).resolves.toEqual({
+      point: { x: 110, y: 512 },
+      viewTag: 42,
+    })
+    await expect(originFromPress(event)).resolves.toBeNull()
+  })
 })
