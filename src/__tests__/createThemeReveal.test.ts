@@ -37,7 +37,7 @@ const setup = (options: Partial<ThemeRevealOptions<Theme>> = {}) => {
         reveal.useStart()
         return reveal.useHeldTheme()
       },
-      { wrapper }
+      { wrapper },
     )
   return { reveal, setTheme, onError, mount, getTheme: () => current }
 }
@@ -47,7 +47,7 @@ const deferStart = () => {
   start.mockReturnValueOnce(
     new Promise<void>((resolve) => {
       finish = resolve
-    })
+    }),
   )
   return () => act(async () => finish())
 }
@@ -160,7 +160,7 @@ describe('switchTo', () => {
     prepare.mockReturnValueOnce(
       new Promise<boolean>((resolve) => {
         resolveFirst = resolve
-      })
+      }),
     )
     const { reveal, setTheme, getTheme, mount } = setup()
     const view = mount()
@@ -197,7 +197,7 @@ describe('switchTo', () => {
     prepare.mockReturnValueOnce(
       new Promise<boolean>((resolve) => {
         resolveFirst = resolve
-      })
+      }),
     )
     const { reveal, setTheme, getTheme, mount } = setup()
     const view = mount()
