@@ -9,6 +9,7 @@
     "android",
     "ios",
     "src",
+    "mocks",
     "expo-module.config.json",
     "!android/build",
     "!android/.gradle",
