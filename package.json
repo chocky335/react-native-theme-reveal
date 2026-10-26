@@ -56,9 +56,9 @@
     "typescript": "~5.9.2"
   },
   "peerDependencies": {
-    "expo": "*",
+    "expo": ">=57.0.0",
     "react": "*",
-    "react-native": "*"
+    "react-native": ">=0.86.0"
   },
   "overrides": {
     "expo-module-scripts": {
