@@ -18,12 +18,20 @@ const DEFAULT_DURATIONS: Record<TransitionType, number> = {
   crossfade: 300,
 }
 
+const MAX_DURATION_MS = 10_000
+
+const isValidDuration = (ms: number | undefined): ms is number =>
+  ms !== undefined && Number.isFinite(ms) && ms > 0 && ms <= MAX_DURATION_MS
+
 export function resolveTransition(input: ResolveTransitionInput): Transition {
   const { requested, fallback, origin, durations } = input
   const type = requested ?? fallback ?? (origin ? 'reveal' : 'crossfade')
   const shape = input.requestedShape ?? input.shape
   const wipeDirection = input.requestedWipeDirection ?? input.wipeDirection
-  const durationOf = (kind: TransitionType) => durations?.[kind] ?? DEFAULT_DURATIONS[kind]
+  const durationOf = (kind: TransitionType) => {
+    const ms = durations?.[kind]
+    return isValidDuration(ms) ? ms : DEFAULT_DURATIONS[kind]
+  }
   switch (type) {
     case 'reveal':
     case 'inverseReveal':

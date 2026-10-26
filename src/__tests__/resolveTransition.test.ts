@@ -114,4 +114,36 @@ describe('resolveTransition', () => {
       }),
     ).toEqual({ type: 'wipe', direction: 'down', durationMs: 400 })
   })
+
+  it.each([NaN, Infinity, -Infinity, 0, -1, 10_001, 450_000])(
+    'uses the default duration for an invalid duration (%p)',
+    (invalid) => {
+      const durations = { reveal: invalid, inverseReveal: invalid, wipe: invalid, crossfade: invalid }
+      expect(resolveTransition({ requested: 'reveal', origin, durations })).toEqual({
+        type: 'reveal',
+        origin,
+        durationMs: 450,
+      })
+      expect(resolveTransition({ requested: 'wipe', origin, durations })).toEqual({
+        type: 'wipe',
+        direction: 'up',
+        durationMs: 400,
+      })
+      expect(resolveTransition({ requested: 'reveal', origin: null, durations })).toEqual({
+        type: 'crossfade',
+        durationMs: 300,
+      })
+    },
+  )
+
+  it('keeps a duration up to 10 000 ms', () => {
+    expect(resolveTransition({ requested: 'crossfade', origin, durations: { crossfade: 10_000 } })).toEqual({
+      type: 'crossfade',
+      durationMs: 10_000,
+    })
+    expect(resolveTransition({ requested: 'crossfade', origin, durations: { crossfade: 0.5 } })).toEqual({
+      type: 'crossfade',
+      durationMs: 0.5,
+    })
+  })
 })
