@@ -191,6 +191,58 @@ describe('switchTo', () => {
     expect(prepare).toHaveBeenNthCalledWith(1, 42)
     expect(prepare).toHaveBeenNthCalledWith(2, undefined)
   })
+
+  it('drops an older switch when a same-theme switch comes during its prepare', async () => {
+    let resolveFirst: (shown: boolean) => void = () => {}
+    prepare.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveFirst = resolve
+      })
+    )
+    const { reveal, setTheme, getTheme, mount } = setup()
+    const view = mount()
+
+    const first = reveal.switchTo(dark)
+    await act(() => reveal.switchTo(light))
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveFirst(true)
+      await first
+    })
+
+    expect(getTheme()).toBe(light)
+    expect(setTheme).not.toHaveBeenCalled()
+    expect(start).not.toHaveBeenCalled()
+    expect(view.result.current).toBeNull()
+  })
+
+  it('applies the theme at once when prepare returns false during a running animation', async () => {
+    const finish = deferStart()
+    const onSettled = jest.fn()
+    const { reveal, getTheme, mount } = setup({ onSettled })
+    const view = mount()
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(view.result.current).toBe(light)
+
+    prepare.mockResolvedValueOnce(false)
+    await act(() => reveal.switchTo(light))
+
+    expect(getTheme()).toBe(light)
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(onSettled).toHaveBeenCalledTimes(1)
+    expect(onSettled).toHaveBeenLastCalledWith(expect.objectContaining({ transition: null }))
+
+    await finish()
+
+    expect(getTheme()).toBe(light)
+    expect(view.result.current).toBeNull()
+    expect(onSettled).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('transition choice', () => {
