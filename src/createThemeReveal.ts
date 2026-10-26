@@ -48,8 +48,18 @@ type RevealState<T> = {
 }
 
 export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeReveal<T> {
-  const { getTheme, setTheme, onSettled } = options
-  const onError = options.onError ?? ((error: unknown) => console.warn(error))
+  const { getTheme, setTheme } = options
+  const warn = (error: unknown) => console.warn(error)
+  // A throwing user callback must not skip setTheme or leave an unhandled rejection.
+  const call = <A>(callback: ((arg: A) => void) | undefined, arg: A) => {
+    try {
+      callback?.(arg)
+    } catch (thrown) {
+      warn(thrown)
+    }
+  }
+  const onError = (error: unknown) => call(options.onError ?? warn, error)
+  const onSettled = (info: SettledInfo) => call(options.onSettled, info)
   const store = createStore<RevealState<T>>({ pending: null, held: null })
   let pendingOrigin: { point: Point; viewTag?: number } | null = null
   let latestId = 0
@@ -84,7 +94,7 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
 
     if (!shown) {
       setTheme(theme)
-      onSettled?.({ transition: null, prepareMs, totalMs: performance.now() - startedAt })
+      onSettled({ transition: null, prepareMs, totalMs: performance.now() - startedAt })
       return
     }
 
@@ -99,7 +109,13 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
       requestedWipeDirection: switchOptions?.wipeDirection,
     })
     store.set({ held: { id, theme: getTheme() } })
-    setTheme(theme)
+    try {
+      setTheme(theme)
+    } catch (error) {
+      if (store.get().held?.id === id) store.set({ held: null })
+      ThemeRevealModule.cancel().catch(onError)
+      throw error
+    }
     store.set({ pending: { id, transition, startedAt, prepareMs } })
   }
 
@@ -114,7 +130,7 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
         .catch(onError)
         .finally(() => {
           if (store.get().held?.id === id) store.set({ held: null })
-          onSettled?.({ transition: transition.type, prepareMs, totalMs: performance.now() - startedAt })
+          onSettled({ transition: transition.type, prepareMs, totalMs: performance.now() - startedAt })
         })
     }, [pending])
   }

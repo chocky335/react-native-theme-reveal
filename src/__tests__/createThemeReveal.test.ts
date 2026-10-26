@@ -37,7 +37,7 @@ const setup = (options: Partial<ThemeRevealOptions<Theme>> = {}) => {
         reveal.useStart()
         return reveal.useHeldTheme()
       },
-      { wrapper },
+      { wrapper }
     )
   return { reveal, setTheme, onError, mount, getTheme: () => current }
 }
@@ -47,7 +47,7 @@ const deferStart = () => {
   start.mockReturnValueOnce(
     new Promise<void>((resolve) => {
       finish = resolve
-    }),
+    })
   )
   return () => act(async () => finish())
 }
@@ -160,7 +160,7 @@ describe('switchTo', () => {
     prepare.mockReturnValueOnce(
       new Promise<boolean>((resolve) => {
         resolveFirst = resolve
-      }),
+      })
     )
     const { reveal, setTheme, getTheme, mount } = setup()
     const view = mount()
@@ -346,6 +346,113 @@ describe('useStart', () => {
 
     expect(onError).toHaveBeenCalledWith(error)
     expect(view.result.current).toBeNull()
+  })
+})
+
+describe('failure paths', () => {
+  it('applies the theme when onError throws for a failed prepare', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const thrown = new Error('onError failed')
+    prepare.mockRejectedValue(new Error('no window'))
+    const { reveal, getTheme } = setup({
+      onError: () => {
+        throw thrown
+      },
+    })
+
+    await expect(reveal.switchTo(dark)).resolves.toBeUndefined()
+
+    expect(getTheme()).toBe(dark)
+    expect(warn).toHaveBeenCalledWith(thrown)
+  })
+
+  it('resolves the same-theme switch when onError throws for a failed cancel', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const thrown = new Error('onError failed')
+    cancel.mockRejectedValue(new Error('cancel failed'))
+    const { reveal } = setup({
+      onError: () => {
+        throw thrown
+      },
+    })
+
+    await expect(reveal.switchTo(light)).resolves.toBeUndefined()
+
+    expect(warn).toHaveBeenCalledWith(thrown)
+  })
+
+  it('resolves the switch when onSettled throws after a switch with no snapshot', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const thrown = new Error('onSettled failed')
+    prepare.mockResolvedValue(false)
+    const { reveal, getTheme } = setup({
+      onSettled: () => {
+        throw thrown
+      },
+    })
+
+    await expect(reveal.switchTo(dark)).resolves.toBeUndefined()
+
+    expect(getTheme()).toBe(dark)
+    expect(warn).toHaveBeenCalledWith(thrown)
+  })
+
+  it('catches a throwing onError and onSettled after a start rejection', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const onErrorThrown = new Error('onError failed')
+    const onSettledThrown = new Error('onSettled failed')
+    start.mockRejectedValueOnce(new Error('start failed'))
+    const { reveal, mount } = setup({
+      onError: () => {
+        throw onErrorThrown
+      },
+      onSettled: () => {
+        throw onSettledThrown
+      },
+    })
+    const view = mount()
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(warn).toHaveBeenCalledWith(onErrorThrown)
+    expect(warn).toHaveBeenCalledWith(onSettledThrown)
+    expect(view.result.current).toBeNull()
+  })
+
+  it('removes the snapshot and releases the hold when setTheme throws', async () => {
+    const thrown = new Error('setTheme failed')
+    const onSettled = jest.fn()
+    const { reveal, mount } = setup({
+      setTheme: () => {
+        throw thrown
+      },
+      onSettled,
+    })
+    const view = mount()
+
+    await act(() => expect(reveal.switchTo(dark)).rejects.toBe(thrown))
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(start).not.toHaveBeenCalled()
+    expect(view.result.current).toBeNull()
+    expect(onSettled).not.toHaveBeenCalled()
+  })
+
+  it('rejects with the setTheme error when there was no snapshot', async () => {
+    const thrown = new Error('setTheme failed')
+    prepare.mockResolvedValue(false)
+    const onSettled = jest.fn()
+    const { reveal } = setup({
+      setTheme: () => {
+        throw thrown
+      },
+      onSettled,
+    })
+
+    await expect(reveal.switchTo(dark)).rejects.toBe(thrown)
+
+    expect(cancel).not.toHaveBeenCalled()
+    expect(onSettled).not.toHaveBeenCalled()
   })
 })
 
