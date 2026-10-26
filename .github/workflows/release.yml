@@ -18,11 +18,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -30,6 +28,13 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx jest --ci --maxWorkers=2
+
+      # Only the check's result reaches this step, never the token.
+      - name: Check for an npm token
+        id: npm
+        env:
+          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+        run: echo "has_token=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Bump the version
         env:
@@ -41,9 +46,37 @@ jobs:
           if [ "$VERSION" != "$current" ]; then
             npm version "$VERSION" --no-git-tag-version
             next="$(node -p "require('./package.json').version")"
+            sed -i -E \
+              -e "s/^version = '[^']*'/version = '$next'/" \
+              -e "s/versionName \"[^\"]*\"/versionName \"$next\"/" \
+              android/build.gradle
             git commit -am "chore: release $next"
           fi
           echo "TAG=v$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - name: Stop if the tag exists
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "::error::$TAG exists on the remote"
+            exit 1
+          fi
+
+      # Same steps as prepublishOnly. The publish steps run with --ignore-scripts so no package script runs in
+      # the step that holds the token.
+      - name: Build
+        run: |
+          npm run clean
+          npm run build
+
+      - name: Check the package
+        if: steps.npm.outputs.has_token != 'true'
+        run: npm publish --dry-run --ignore-scripts --access public
+
+      - name: Publish to npm
+        if: steps.npm.outputs.has_token == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --ignore-scripts --provenance --access public
 
       - name: Tag and push
         run: |
@@ -56,12 +89,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$TAG" --title "$TAG" --generate-notes
 
-      - name: Publish to npm
-        if: env.NPM_TOKEN != ''
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
-
       - name: Publish step skipped
-        if: env.NPM_TOKEN == ''
+        if: steps.npm.outputs.has_token != 'true'
         run: echo "No NPM_TOKEN secret is set. Run npm publish from a checkout of $TAG."
