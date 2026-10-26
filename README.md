@@ -193,9 +193,32 @@ you, so normally you won't need it.
 type Point = { x: number; y: number }
 type Shape = { path: string; anchor: Point; inscribedRadius: number }
 type WipeDirection = 'up' | 'down' | 'left' | 'right'
-type TransitionType = 'reveal' | 'inverseReveal' | 'wipe' | 'crossfade'
+type Transition =
+  | { type: 'reveal'; origin: Point; durationMs: number; shape?: Shape }
+  | { type: 'inverseReveal'; origin: Point; durationMs: number; shape?: Shape }
+  | { type: 'wipe'; direction: WipeDirection; durationMs: number }
+  | { type: 'crossfade'; durationMs: number }
+type TransitionType = Transition['type']
 type SettledInfo = { transition: TransitionType | null; prepareMs: number; totalMs: number }
+type SwitchOptions = { transition?: TransitionType; shape?: Shape; wipeDirection?: WipeDirection }
+type PressOrigin = { point: Point; viewTag?: number }
+type MeasurableView = {
+  measureInWindow(callback: (x: number, y: number, width: number, height: number) => void): void
+}
+type ResolveTransitionInput = {
+  requested?: TransitionType // the switchTo option
+  fallback?: TransitionType // the factory option
+  origin: Point | null
+  shape?: Shape
+  durations?: Partial<Record<TransitionType, number>>
+  wipeDirection?: WipeDirection
+  requestedShape?: Shape
+  requestedWipeDirection?: WipeDirection
+}
 ```
+
+`ThemeRevealOptions<T>` is the options object for `createThemeReveal` (the table above) and `ThemeReveal<T>` is
+what it returns. All of these types are exported.
 
 ## Shape format
 
@@ -296,7 +319,8 @@ The release rule: on each Android device, each of our medians has to be no more 
 alternative's median. Ours fails that on four metrics:
 
 - Mi 11 Lite, JS max gap: 39.0 ms vs 37.0 ms for `theme-switch-animation` (+5.4%), against a limit of 38.9 ms. The
-  difference is within the spread between measurement passes, but it's still over the limit.
+  difference is within the spread between measurement passes, but it's still over the limit. I haven't traced the
+  cause.
 - Pixel 8 Pro, overlay frame: 72.3 ms vs 62.8 ms for `theme-switch-animation` (+15%). Our overlay shows up about
   one frame later.
 - Pixel 8 Pro, missed vsyncs: 4 vs 3 for `theme-switch-animation` (one frame interval).
@@ -308,10 +332,16 @@ gives a pixel-exact snapshot. On the Mi 11 Lite a system trace shows this readba
 instead. I couldn't get a system trace on the Pixel 8 Pro, so there the same readback cost is the likely cause but
 not a measured one.
 
-On the first switch in a fresh process, ours is also slower in two places (3 runs each, so these numbers are
-noisy):
-- Pixel 8 Pro, overlay frame: 121.2 ms vs 96.7 ms for `theme-switch-animation`.
-- Mi 11 Lite, JS max gap: 93.9 ms vs 41.2 ms for `theme-switch-animation`.
+On the first switch in a fresh process (no warm-up), ours is slower in four places. Each value is a median of only
+3 runs, so these numbers are noisy.
+- Pixel 8 Pro, overlay frame: 121.2 ms vs 96.7 ms for `theme-switch-animation` (+25%).
+- Pixel 8 Pro, snapshot JS: 100.5 ms vs 71.7 ms for `theme-switch-animation` (+40%).
+- Pixel 8 Pro, JS max gap: 36.1 ms vs 29.2 ms for `theme-switch-animation` (+24%).
+- Mi 11 Lite, JS max gap: 93.9 ms vs 41.2 ms for `theme-switch-animation` (2.3 times), which is also 2.4 times our
+  own warm value.
+
+On the Mi 11 Lite, ours wins the first-switch overlay frame and snapshot JS (89.0 and 68.8 ms vs 123.1 and 98.1
+ms). The full first-switch table is in [`benchmark/RESULTS.md`](benchmark/RESULTS.md).
 
 ### iOS (simulator)
 
@@ -323,6 +353,9 @@ simulator.
 | ours | 8.3 | 16.8 |
 | theme-switch-animation | 11.8 | 16.9 |
 | skia | 44.0 | 18.0 |
+
+The benchmark script can't tap on the simulator, so on iOS "Snapshot, JS" is measured from the run call instead of
+a touch.
 
 ## License
 
