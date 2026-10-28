@@ -77,8 +77,7 @@ public class ThemeRevealModule: Module {
     failsafe = nil
     started?.resolve()
     started = promise
-    let duration = transition.durationMs / 1000
-    guard let window = current.view.window, duration.isFinite, duration > 0,
+    guard let window = current.view.window, let duration = Motion.durationSeconds(ms: transition.durationMs),
           Motion.sameSize(current.size, window.bounds.size) else {
       removeOverlay()
       return

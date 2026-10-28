@@ -43,6 +43,7 @@ enum Motion {
   // Keyframes stop at 10 s of samples; a longer duration stretches them.
   static let maxSeconds = 10.0
   static let maxSamples = 1200
+  static let maxDurationMs = 10_000.0
   static let easeX1 = 0.65
   static let easeY1 = 0.0
   static let easeX2 = 0.35
@@ -75,6 +76,13 @@ enum Motion {
       if bezier(mid, easeX1, easeX2) < t { lo = mid } else { hi = mid }
     }
     return bezier((lo + hi) / 2, easeY1, easeY2)
+  }
+
+  // Non-finite, zero, negative or overlong durations are invalid: the overlay would sit on
+  // screen too long. Same cap as Android.
+  static func durationSeconds(ms: Double) -> Double? {
+    guard ms.isFinite, ms > 0, ms <= maxDurationMs else { return nil }
+    return ms / 1000
   }
 
   static func canAnimate(active: Bool, reduceMotion: Bool) -> Bool {

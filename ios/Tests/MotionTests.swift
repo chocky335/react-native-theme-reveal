@@ -88,6 +88,13 @@ enum MotionTests {
     check(!Motion.sameSize(CGSize(width: 390, height: 844), CGSize(width: 844, height: 390)), "sameSize: rotated")
     check(!Motion.sameSize(CGSize(width: 390, height: 844), CGSize(width: 390, height: 800)), "sameSize: shorter")
 
+    // durationSeconds: a finite duration above 0 and up to 10 000 ms, in seconds (the same cap as Android).
+    check(Motion.durationSeconds(ms: 450) == 0.45, "durationSeconds converts ms to seconds")
+    check(Motion.durationSeconds(ms: 10_000) == 10, "durationSeconds keeps the 10 000 ms cap")
+    for ms in [Double.nan, .infinity, -.infinity, 0, -1, 10_000.5, 450_000] {
+      check(Motion.durationSeconds(ms: ms) == nil, "durationSeconds rejects \(ms) ms")
+    }
+
     // effectiveInscribedRadius: same values as the Android ShapePathTest.
     let box = CGRect(x: 0, y: 0, width: 40, height: 30)
     let halfDiagonal = hypot(40.0, 30.0) / 2
