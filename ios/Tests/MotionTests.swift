@@ -137,6 +137,14 @@ enum MotionTests {
     check(close(flat.bounds, circle.bounds), "an empty-area path falls back to the unit circle")
     let lost = RevealShape.resolve(path: "M0 0H40V30H0Z", anchor: CGPoint(x: Double.nan, y: 0), inscribedRadius: 1)
     check(close(lost.bounds, circle.bounds), "a non-finite anchor falls back to the unit circle")
+    check(RevealShape.parse(path: "M0 0H40V30H0Z", anchor: CGPoint(x: 20, y: 15), inscribedRadius: 12) != nil,
+          "parse returns a valid shape")
+    check(RevealShape.parse(path: "M0 0 L", anchor: CGPoint(x: 20, y: 15), inscribedRadius: 12) == nil,
+          "parse returns nil for an unparsable path")
+    check(RevealShape.parse(path: "M0 0H40", anchor: .zero, inscribedRadius: 1) == nil,
+          "parse returns nil for an empty-area path")
+    check(RevealShape.parse(path: "M0 0H40V30H0Z", anchor: CGPoint(x: Double.nan, y: 0), inscribedRadius: 1) == nil,
+          "parse returns nil for a non-finite anchor")
 
     // startScale: the shape starts 24 pt tall.
     check(close(Double(Motion.startScale(for: square)), 24.0 / 30.0, 1e-9), "the start scale makes the shape 24 pt tall")

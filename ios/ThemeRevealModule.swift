@@ -159,10 +159,14 @@ public class ThemeRevealModule: Module {
 
   private static func shape(of record: ShapeRecord?) -> RevealShape {
     guard let record else { return .circle }
-    return RevealShape.resolve(
+    guard let shape = RevealShape.parse(
       path: record.path,
       anchor: CGPoint(x: record.anchor.x, y: record.anchor.y),
-      inscribedRadius: CGFloat(record.inscribedRadius))
+      inscribedRadius: CGFloat(record.inscribedRadius)) else {
+      log.warn("ThemeReveal: cannot parse the shape path \"\(record.path)\", using the circle")
+      return .circle
+    }
+    return shape
   }
 
   private static let failsafeSeconds = 1.0

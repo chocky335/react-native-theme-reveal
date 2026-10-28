@@ -18,13 +18,18 @@ struct RevealShape {
     anchor: .zero,
     inscribedRadius: 1)
 
-  // An unparsable or empty path, or a non-finite anchor, falls back to the unit circle. The
-  // path keeps nonzero fill (as on Android) inside the even-odd reveal mask.
+  // An unparsable or empty path, or a non-finite anchor, falls back to the unit circle.
   static func resolve(path: String, anchor: CGPoint, inscribedRadius: CGFloat) -> RevealShape {
-    guard anchor.x.isFinite, anchor.y.isFinite, let parsed = SVGPath.parse(path) else { return circle }
+    parse(path: path, anchor: anchor, inscribedRadius: inscribedRadius) ?? circle
+  }
+
+  // nil for an unparsable or empty path, or a non-finite anchor. The path keeps nonzero
+  // fill (as on Android) inside the even-odd reveal mask.
+  static func parse(path: String, anchor: CGPoint, inscribedRadius: CGFloat) -> RevealShape? {
+    guard anchor.x.isFinite, anchor.y.isFinite, let parsed = SVGPath.parse(path) else { return nil }
     let shape = RevealShape(
       path: parsed.normalized(using: .winding), anchor: anchor, inscribedRadius: inscribedRadius)
-    guard shape.bounds.width > 0, shape.bounds.height > 0 else { return circle }
+    guard shape.bounds.width > 0, shape.bounds.height > 0 else { return nil }
     return shape
   }
 
