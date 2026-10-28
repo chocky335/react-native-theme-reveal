@@ -13,6 +13,8 @@
 #                      itself under it for the whole pass.
 #   BENCH_LEASED=1     the caller already holds the phone's lease.
 #   BENCH_PAUSED_FILE  if this file exists, the pass stops before the next run.
+#   BENCH_COLD=1       first switch in a fresh process: no warm-up, the app is force-stopped 1 s before each
+#                      run, and output goes to results/cold/.
 set -u
 if (( $# < 3 )); then
   echo "usage: android.sh <serial> <runs> <lib>..." >&2
@@ -103,15 +105,18 @@ for name in animator_duration_scale transition_animation_scale window_animation_
   fi
 done
 RESULTS=$HERE/results
+[[ -n ${BENCH_COLD:-} ]] && RESULTS=$RESULTS/cold
 mkdir -p $RESULTS/raw
 WARMUP=$(mktemp -d)
 echo "device $DEVICE, scales ${(j:,:)SCALES}, $RUNS rounds of ${LIBS[*]}"
 
-for lib in $LIBS; do
-  paused && { echo "paused; stopping" >&2; exit 75; }
-  one_run $lib $WARMUP/$lib.txt
-  echo "warm-up $lib: ${BENCH:-no BENCH line}"
-done
+if [[ -z ${BENCH_COLD:-} ]]; then
+  for lib in $LIBS; do
+    paused && { echo "paused; stopping" >&2; exit 75; }
+    one_run $lib $WARMUP/$lib.txt
+    echo "warm-up $lib: ${BENCH:-no BENCH line}"
+  done
+fi
 rm -rf $WARMUP
 
 count=${#LIBS}
@@ -123,6 +128,10 @@ for round in $(seq 1 $RUNS); do
     position=$(( position + 1 ))
     paused && { echo "paused; stopping" >&2; exit 75; }
     raw=$RESULTS/raw/$DEVICE-$lib-$round.txt
+    if [[ -n ${BENCH_COLD:-} ]]; then
+      a shell am force-stop $PKG
+      sleep 1
+    fi
     one_run $lib $raw
     echo "round $round, $lib: ${BENCH:-no BENCH line}"
     python3 -I $HERE/runresult.py --device $DEVICE --lib $lib --round $round --position $position \
