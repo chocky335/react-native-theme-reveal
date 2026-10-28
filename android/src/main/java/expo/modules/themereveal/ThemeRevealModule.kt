@@ -6,6 +6,7 @@ import android.graphics.PointF
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -212,7 +213,8 @@ class ThemeRevealModule : Module() {
         PointF(record.anchor.x.toFloat(), record.anchor.y.toFloat()),
         record.inscribedRadius.toFloat(),
       )
-    } catch (_: RuntimeException) {
+    } catch (error: RuntimeException) {
+      Log.w(TAG, "Cannot parse the shape path \"${record.path}\", using the circle", error)
       ShapePath.circle()
     }
   }
@@ -227,5 +229,6 @@ class ThemeRevealModule : Module() {
 
   private companion object {
     const val FAILSAFE_MS = 1000L
+    const val TAG = "ThemeReveal"
   }
 }
