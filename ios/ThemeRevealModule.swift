@@ -22,8 +22,10 @@ struct TransitionRecord: Record {
 
 public class ThemeRevealModule: Module {
   private var overlay: RevealOverlay?
-  // React root view a tapped view's origin is measured in (pageX / pageY).
-  private weak var originRoot: UIView?
+  // Offset, in the overlay, of the React root a tapped view's origin is measured in (pageX /
+  // pageY). Read at snapshot time like on Android, so a modal that moves or closes before start
+  // doesn't shift the origin.
+  private var originOffset: CGPoint?
   private var started: Promise?
   // A snapshot that never gets start() would freeze the screen; drop it.
   private var failsafe: DispatchWorkItem?
@@ -61,7 +63,9 @@ public class ThemeRevealModule: Module {
       return false
     }
     overlay = next
-    originRoot = viewTag.flatMap { findView($0) }.flatMap(Self.reactRoot(of:))
+    originOffset = viewTag.flatMap { findView($0) }.flatMap(Self.reactRoot(of:)).flatMap { root in
+      root.window == nil ? nil : root.convert(CGPoint.zero, to: next.view)
+    }
     let item = DispatchWorkItem { [weak self] in self?.removeOverlay() }
     failsafe = item
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.failsafeSeconds, execute: item)
@@ -119,15 +123,15 @@ public class ThemeRevealModule: Module {
     started = nil
     let current = overlay
     overlay = nil
-    originRoot = nil
+    originOffset = nil
     current?.remove()
     pending?.resolve()
   }
 
   // Origin is relative to the tapped view's React root, or in window points if there's none.
   private func toOverlay(_ point: CGPoint, _ current: RevealOverlay) -> CGPoint {
-    if let root = originRoot, root.window != nil {
-      return root.convert(point, to: current.view)
+    if let offset = originOffset {
+      return CGPoint(x: point.x + offset.x, y: point.y + offset.y)
     }
     return current.view.convert(point, from: nil)
   }
