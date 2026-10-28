@@ -15,9 +15,12 @@ All three libraries build and run.
 
 - One build, one screen (`example/src/BenchmarkScreen.tsx`), the same themed rows for every library.
 - One Run button and a library picker, so the press point and the circle origin are the same for every library.
-- Every library gets the same duration (450 ms, `example/src/bench/shared.ts`), and ours and Skia both use a
-  linear circle. `react-native-theme-switch-animation` uses the Android `createCircularReveal` default
-  interpolator and has no option to change it.
+- Every library gets the same duration (450 ms, `example/src/bench/shared.ts`), but the circle curves differ:
+  - `ours` uses its default reveal curve: the scale grows as `from * (to / from) ^ (g ^ 1.4)` from a 24 dp
+    starting height, with `g` linear in time.
+  - `skia` grows the radius linearly from 0 (`Easing.linear`).
+  - `react-native-theme-switch-animation` uses the Android `createCircularReveal` default interpolator and has no
+    option to change it.
 - Each run reopens the screen from a link (with a new React key), so every run switches light to dark on a fresh
   screen. Only the selected library's host is mounted. The Skia canvas mounts with the screen, 1.5 s before the
   press, so creating it isn't part of the run's cost.
@@ -149,6 +152,14 @@ python3 benchmark/report.py benchmark/results/*.json
 - `report.py` prints a row per device and library. `Runs` shows valid / all, every metric column is the median
   over valid runs, and `Overlay frame` is the column that decides pass/fail.
 
+To measure the first switch in a fresh process (`results/cold/`), set `BENCH_COLD=1`. The pass then skips the
+warm-up run and force-stops the app 1 s before each run.
+
+```sh
+BENCH_COLD=1 benchmark/android.sh <serial> 3 ours theme-switch-animation skia
+python3 benchmark/report.py benchmark/results/cold/*.json
+```
+
 ## Run it (iOS simulator)
 
 Scripts can't tap on the simulator, so a launch argument drives the benchmark instead. Each id opens a fresh
@@ -159,6 +170,10 @@ button's centre (`t0=onPress`):
 xcrun simctl launch <udid> expo.modules.themereveal.example -benchRuns 'ours theme-switch-animation skia'
 xcrun simctl spawn <udid> log stream --style compact --predicate 'eventMessage CONTAINS "BENCH"'
 ```
+
+The iOS pass only has the JS columns. I meant to add a `CADisplayLink` frame probe for the simulator but didn't
+get to it. `xctrace` doesn't support hitches on the simulator, and without a physical iPhone the frames come from
+the Mac GPU anyway, so they wouldn't reflect a phone's frame cost.
 
 ## Tests
 

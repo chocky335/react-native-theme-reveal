@@ -277,7 +277,7 @@ A switch from inside a React Native `<Modal>` animates too.
 
 ## Performance
 
-Measured on 2026-10-25 with release builds. The method, raw dumps and scripts live in [`benchmark/`](benchmark/),
+Measured on 2026-10-28 with release builds. The method, raw dumps and scripts live in [`benchmark/`](benchmark/),
 and the detailed results and notes are in [`benchmark/RESULTS.md`](benchmark/RESULTS.md).
 
 Everything runs in one build of the example app, on the same screen, with a 450 ms circle reveal:

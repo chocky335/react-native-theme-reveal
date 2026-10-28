@@ -29,6 +29,7 @@
   "jankyShare": 0.0,
   "jankyOverMs": 32.9,
   "overlayFrameMs": 367.8,
+  "overlayLeadMs": -64.3,
   "missedVsyncs": 10,
   "lateFrames": 0,
   "valid": true,

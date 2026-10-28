@@ -1,6 +1,6 @@
 # Benchmark results
 
-Measured on 2026-10-25. See `benchmark/README.md` for what each metric means and the run rules.
+Measured on 2026-10-28. See `benchmark/README.md` for what each metric means and the run rules.
 
 ## Setup
 
@@ -61,12 +61,13 @@ alternative's median. Lower is better for all metrics.
 | Pixel 8 Pro | Frame p90 (ms) (2) | 8.0 | 9.6 (theme-switch-animation) | 10.1 | PASS |
 | Pixel 8 Pro | Janky (%) (2) | 0 | 5 (theme-switch-animation) | 5 | PASS |
 | Pixel 8 Pro | Late frames (2) | 0 | 1 (theme-switch-animation) | 1.1 | PASS |
-| Pixel 8 Pro | Missed vsyncs | 4 | 3 (theme-switch-animation) | 3.2 | FAIL |
+| Pixel 8 Pro | Missed vsyncs (2) | 4 | 3 (theme-switch-animation) | 3.2 | FAIL |
 | Pixel 8 Pro | JS max gap (ms) | 28.0 | 25.1 (theme-switch-animation) | 26.4 | FAIL |
 
 (1) Rule confirmed by trace on the Mi only, and on the Pixel by gfxinfo sync-phase agreement (no atrace on Android
 17). See "Notes on the metrics". (2) Skia is left out of these Pixel rows because it drew at 30 Hz there, so its
-frame times and its janky and late thresholds can't be compared. Ours passes them against Skia too.
+frame times, its janky and late thresholds and its missed vsyncs (counted in 32.9 ms intervals) can't be compared.
+Ours passes them against Skia too.
 
 - Mi 11 Lite: ours wins the overlay frame by 7%. The JS max gap fails: 39.0 ms vs 37.0 ms is +5.4%, over the 5%
   limit (38.9 ms). The difference is within the spread between passes (ours 40.5 / 45.2 / 39.0 ms,
@@ -121,21 +122,40 @@ three libraries, so it's not something the package changes.
 
 ## First switch in a fresh process
 
-A real user's first switch doesn't get a warm-up, so each run below force-stops the app, opens the benchmark
-screen and switches once. Median of 3 runs per library.
+A real user's first switch doesn't get a warm-up, so here each run force-stops the app, waits 1 s, opens the
+benchmark screen and switches once, with no warm-up run. Each phone ran 3 rounds with the starting library
+rotating each round. Every value is the median of 3 runs.
 
-| Device | Library | Overlay frame (ms) | Snapshot, JS (ms) | JS max gap (ms) |
-|---|---|---|---|---|
-| Mi 11 Lite | ours | 89.0 | 68.8 | 93.9 |
-| Mi 11 Lite | theme-switch-animation | 123.1 | 98.1 | 41.2 |
-| Mi 11 Lite | skia | 451.2 | 401.0 | 363.9 |
-| Pixel 8 Pro | ours | 121.2 | 100.5 | 36.1 |
-| Pixel 8 Pro | theme-switch-animation | 96.7 | 71.7 | 29.2 |
-| Pixel 8 Pro | skia | 367.8 | 305.8 | 282.8 |
+How the runs were made: `BENCH_COLD=1 benchmark/android.sh <serial> 3 ours theme-switch-animation skia` does these
+steps. The published runs came from a lab wrapper doing the same steps with one `android.sh` call per run, which
+is why each JSON lists only its own library in `order`, with `position` 1. I rebuilt the JSON files from the raw
+dumps with the current `runresult.py`, which added `overlayLeadMs` (-64.3 to +3.3 ms). Nothing else changed, and
+all 18 runs are valid.
 
-With only 3 runs these numbers are noisy: before fix 3, the same measurement gave theme-switch-animation 78.6 ms
-on the Mi. On the first switch, our JS max gap on the Mi is 2.4 times its warm value. Raw runs are in
-`results/cold/`.
+```
+python3 benchmark/report.py benchmark/results/cold/*.json
+```
+
+| Device | Library | Runs | Overlay frame (ms) | Snapshot, JS (ms) | Frame p50 (ms) | Frame p90 (ms) | Janky (%) | Late frames | Missed vsyncs | JS max gap (ms) | Frame interval (ms) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| M2101K9AG | ours | 3/3 | 89.0 | 68.8 | 16.7 | 21.6 | 50 | 1 | 4 | 93.9 | 16.6 |
+| M2101K9AG | theme-switch-animation | 3/3 | 123.1 | 98.1 | 21.2 | 23.3 | 68 | 1 | 5 | 41.2 | 16.6 |
+| M2101K9AG | skia | 3/3 | 451.2 | 401.0 | 17.7 | 24.9 | 59 | 0 | 26 | 363.9 | 16.6 |
+| Pixel-8-Pro | ours | 3/3 | 121.2 | 100.5 | 5.8 | 12.9 | 7 | 1 | 5 | 36.1 | 16.5 |
+| Pixel-8-Pro | theme-switch-animation | 3/3 | 96.7 | 71.7 | 8.9 | 14.1 | 10 | 0 | 4 | 29.2 | 16.5 |
+| Pixel-8-Pro | skia | 3/3 | 367.8 | 305.8 | 7.5 | 10.3 | 0 | 0 | 10 | 282.8 | 32.9 |
+
+Skia drew at 30 Hz on the Pixel 8 Pro here too, so its frame times, janky share, late frames and missed vsyncs
+there can't be compared with the other two.
+
+Going by the pass rule (best alternative's median plus 5%), ours loses the first switch in seven places:
+- Pixel 8 Pro, all against `theme-switch-animation`: overlay frame (121.2 vs 96.7 ms), snapshot JS (100.5 vs 71.7
+  ms), late frames (1 vs 0), missed vsyncs (5 vs 4) and JS max gap (36.1 vs 29.2 ms).
+- Mi 11 Lite: late frames (1 vs 0 for Skia) and JS max gap (93.9 vs 41.2 ms for `theme-switch-animation`).
+
+Ours wins the overlay frame and snapshot JS on the Mi 11 Lite. With only 3 runs these numbers are noisy: before
+fix 3, the same measurement gave theme-switch-animation 78.6 ms on the Mi. On the first switch, our JS max gap on
+the Mi is 2.4 times its warm value. Raw runs are in `results/cold/`.
 
 ## iOS simulator
 
@@ -151,7 +171,8 @@ code didn't change in this pass.
 | skia | 44.0 | 18.0 | 44.6 |
 
 All three libraries build and run on iOS. There are no frame metrics: `xctrace` reports "Hitches is not supported
-on this platform" for the simulator. The BENCH lines are in `results/ios-simulator/`.
+on this platform" for the simulator, and the `CADisplayLink` frame probe I wanted for the simulator didn't get
+built in this pass (see `benchmark/README.md`). The BENCH lines are in `results/ios-simulator/`.
 
 ## Notes on the metrics
 
@@ -176,6 +197,7 @@ on this platform" for the simulator. The BENCH lines are in `results/ios-simulat
   are a better signal for real drops.
 - The janky threshold is the interval each library drew at. On the Pixel, Skia drew at 30 Hz (32.9 ms), so its
   threshold doubled and its frame times cover half as many frames. That means its frame p50, p90 and janky values
-  on the Pixel can't be compared with the other two.
+  on the Pixel can't be compared with the other two. Its missed vsyncs are counted in 32.9 ms intervals, so 9 is
+  about 18 at 60 Hz.
 - `theme-switch-animation` doesn't report an end to JS, so its run ends a fixed 700 ms after
   `switchThemeFunction`.
