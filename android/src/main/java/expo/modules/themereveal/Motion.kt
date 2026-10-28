@@ -18,6 +18,7 @@ internal object Motion {
   private const val EASE_X2 = 0.35f
   private const val EASE_Y2 = 1f
   private const val EASE_STEPS = 24
+  private const val MAX_DURATION_MS = 10_000L
 
   fun growth(g: Double, from: Double, to: Double): Double = from * (to / from).pow(g.pow(GROWTH_CURVE))
 
@@ -37,6 +38,10 @@ internal object Motion {
     }
     return bezier((lo + hi) / 2, EASE_Y1, EASE_Y2)
   }
+
+  // Non-finite, zero, negative or overlong durations are invalid: the overlay would sit on screen too long.
+  fun durationMs(ms: Double): Long? =
+    if (!ms.isFinite() || ms > MAX_DURATION_MS) null else ms.toLong().takeIf { it > 0 }
 
   fun canAnimate(apiLevel: Int, resumed: Boolean): Boolean = apiLevel >= Build.VERSION_CODES.O && resumed
 

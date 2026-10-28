@@ -4,6 +4,7 @@ import kotlin.math.hypot
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -115,5 +116,20 @@ class MotionTest {
   @Test
   fun toOverlayShiftsAPointByTheRootOffset() {
     assertArrayEquals(floatArrayOf(210f, 940f), Motion.toOverlay(120f, 340f, 90, 600, 0, 0), 1e-6f)
+  }
+
+  @Test
+  fun durationMsKeepsAPositiveDurationUpToTheCap() {
+    assertEquals(450L, Motion.durationMs(450.0))
+    assertEquals(450L, Motion.durationMs(450.9))
+    assertEquals(1L, Motion.durationMs(1.0))
+    assertEquals(10_000L, Motion.durationMs(10_000.0))
+  }
+
+  @Test
+  fun durationMsRejectsANonFiniteZeroNegativeOrOverlongDuration() {
+    for (ms in listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 0.0, 0.5, -1.0, 10_000.5, 450_000.0)) {
+      assertNull("$ms", Motion.durationMs(ms))
+    }
   }
 }

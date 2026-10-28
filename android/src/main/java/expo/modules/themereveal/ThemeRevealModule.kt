@@ -141,9 +141,10 @@ class ThemeRevealModule : Module() {
     started?.resolve()
     started = promise
     val cover = geometry?.cover
-    val durationMs = transition.durationMs.toLong()
-    if (view.parent == null || cover == null || durationMs <= 0 || !animatorsEnabled() ||
-      !Motion.sameSize(view.snapshotWidth, view.snapshotHeight, cover.width, cover.height)
+    val durationMs = Motion.durationMs(transition.durationMs)
+    // A modal closing between prepare and start detaches the overlay, so resolve right away.
+    if (view.parent == null || !view.isAttachedToWindow || cover == null || durationMs == null ||
+      !animatorsEnabled() || !Motion.sameSize(view.snapshotWidth, view.snapshotHeight, cover.width, cover.height)
     ) {
       removeOverlay()
       return
