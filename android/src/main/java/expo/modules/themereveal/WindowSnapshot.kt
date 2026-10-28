@@ -135,7 +135,9 @@ internal object WindowSnapshot {
     // ms for 1080x2400 on a Mi 11 Lite). So the request runs on copyHandler and the main thread stays free. The
     // listener and all failures still run on handler. The listener is posted to the front of handler's queue: the
     // readback often finishes right as a vsync arrives, and this way the frame queued for that vsync runs after the
-    // listener, with the overlay, instead of before it (one frame earlier on a Mi 11 Lite).
+    // listener, with the overlay, instead of before it (one frame earlier on a Mi 11 Lite). The result can also
+    // jump ahead of a queued cancel, prepare or onPause. Harmless: JS drops a result whose switch is no longer the
+    // latest, and the next removeOverlay cleans up its overlay.
     val toFront = PixelCopy.OnPixelCopyFinishedListener { result ->
       handler.postAtFrontOfQueue { listener.onPixelCopyFinished(result) }
     }
@@ -143,7 +145,7 @@ internal object WindowSnapshot {
     // locks internally), mWindowAttributes.surfaceInsets and mWidth/mHeight. A stale read means either a failed copy
     // (invalid surface throws, caught below, or the listener gets an error) or a size mismatch (Motion.sameSize in
     // start drops the overlay), and both go down the existing failure path. postAtFrontOfQueue jumps the main queue
-    // with one short message per switch (the result: one addView, one resolve).
+    // with one short message per copy (two for a modal). The last one does a single addView and resolve.
     copyHandler.post {
       try {
         PixelCopy.request(window, bitmap, toFront, copyHandler)
@@ -156,6 +158,8 @@ internal object WindowSnapshot {
     }
   }
 
+  // Never quit the copy thread. Without it PixelCopy never calls back, prepare never resolves and the switch never
+  // applies the theme.
   private val copyHandler: Handler by lazy {
     val thread = HandlerThread("ThemeRevealCopy", Process.THREAD_PRIORITY_DISPLAY)
     thread.start()
