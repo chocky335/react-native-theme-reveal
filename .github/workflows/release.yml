@@ -12,22 +12,46 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
-  release:
+  # No write token or OIDC token in this job: dependency install scripts run here.
+  verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx jest --ci --maxWorkers=2
+      - name: Build
+        run: |
+          npm run clean
+          npm run build
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
-      - run: npm ci
-      - run: npm run lint
-      - run: npx jest --ci --maxWorkers=2
+      - run: npm ci --ignore-scripts
 
       # Only the check's result reaches this step, never the token.
       - name: Check for an npm token
@@ -55,8 +79,13 @@ jobs:
           echo "TAG=v$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
 
       - name: Stop if the tag exists
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          if git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
             echo "::error::$TAG exists on the remote"
             exit 1
           fi
@@ -78,11 +107,16 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --ignore-scripts --provenance --access public
 
+      # Checkout doesn't persist credentials, so only this step can push.
       - name: Tag and push
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
           git tag "$TAG"
-          git push origin "HEAD:$GITHUB_REF_NAME"
-          git push origin "$TAG"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF_NAME"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "$TAG"
 
       - name: Create the GitHub release
         env:
