@@ -11,11 +11,18 @@ Right before your app applies the new theme, the package snapshots the window an
 The theme changes underneath, then the snapshot animates away. Your components render the new theme once, and
 nothing has to interpolate colours per component.
 
-- Expo module, New Architecture only. Bare React Native apps can use it too, through `install-expo-modules`.
+- Expo module, New Architecture only. Bare React Native apps can use it through `install-expo-modules`, but I
+  haven't verified that setup.
 - Android 8.0+ (API 26) and iOS 16.4+.
 - No runtime JS dependencies besides React, React Native and Expo.
 
 ## Install
+
+Requirements:
+- Expo SDK 57 or newer (React Native 0.86 or newer), New Architecture.
+- iOS: deployment target 16.4 or higher.
+- Android: installs on API 24 and up, but the animation needs API 26. On API 24 and 25 the theme switches without
+  animating.
 
 In an Expo project:
 
@@ -27,7 +34,7 @@ npx expo prebuild
 There's native code in here, so it won't run in Expo Go. Use a development build (`npx expo run:android`,
 `npx expo run:ios`).
 
-In a bare React Native project, set up Expo modules first:
+In a bare React Native project, set up Expo modules first (I haven't verified this setup):
 
 ```sh
 npx install-expo-modules@latest
@@ -38,48 +45,62 @@ cd ios && pod install
 ## Quick start
 
 ```tsx
-import { useRef, useState } from 'react'
+import { useRef, useSyncExternalStore } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import type { GestureResponderEvent } from 'react-native'
 import { createThemeReveal, originFromPress } from 'react-native-theme-reveal'
 
 type Theme = 'light' | 'dark'
 
+// getTheme has to read the theme synchronously, hence a small store outside React.
+let theme: Theme = 'light'
+const listeners = new Set<() => void>()
+const themeStore = {
+  get: () => theme,
+  set: (next: Theme) => {
+    theme = next
+    listeners.forEach((listener) => listener())
+  },
+  subscribe: (listener: () => void) => {
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+    }
+  },
+}
+
+// One instance per app, at module scope.
+const reveal = createThemeReveal<Theme>({ getTheme: themeStore.get, setTheme: themeStore.set })
+
 export default function App() {
-  const [theme, setTheme] = useState<Theme>('light')
-  const themeRef = useRef(theme) // getTheme has to be synchronous, hence a ref mirroring the state
-  const [reveal] = useState(() =>
-    createThemeReveal<Theme>({
-      getTheme: () => themeRef.current,
-      setTheme: (next) => {
-        themeRef.current = next
-        setTheme(next)
-      },
-    }),
-  )
+  const current = useSyncExternalStore(themeStore.subscribe, themeStore.get)
   reveal.useStart() // once, near the root
   const buttonRef = useRef<View>(null)
 
   const onPress = async (event: GestureResponderEvent) => {
     const origin = await originFromPress(event, buttonRef.current) // the ref is the fallback
     if (origin) reveal.setOrigin(origin.point, origin.viewTag)
-    await reveal.switchTo(themeRef.current === 'light' ? 'dark' : 'light')
+    await reveal.switchTo(themeStore.get() === 'light' ? 'dark' : 'light')
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme === 'light' ? '#fff' : '#111' }}>
+    <View style={{ flex: 1, backgroundColor: current === 'light' ? '#fff' : '#111' }}>
       <Pressable ref={buttonRef} onPress={onPress}>
-        <Text style={{ color: theme === 'light' ? '#111' : '#fff' }}>Switch theme</Text>
+        <Text style={{ color: current === 'light' ? '#111' : '#fff' }}>Switch theme</Text>
       </Pressable>
     </View>
   )
 }
 ```
 
-- `getTheme` has to return the current theme synchronously. React state lags behind, so keep the theme in a ref
-  (or any store you can read right away).
+- `getTheme` has to return the current theme synchronously. React state lags behind, so keep the theme somewhere
+  you can read right away, like the store above.
+- `setTheme` has to update what React renders in the same tick, which the store above does.
+- Create the instance at module scope, like above. Creating it during render trips the React hooks lint rules and
+  the React Compiler.
 - `originFromPress` reads the touch point from the press event. Presses from a keyboard, switch control or screen
-  reader don't have one, so it measures the view you pass and uses its centre instead.
+  reader don't have one, so it measures the view you pass and uses its centre instead. That fallback is covered by
+  unit tests, but I haven't checked a TalkBack or VoiceOver activation on a real device.
 - The default transition is `reveal` when there's an origin and `crossfade` when there isn't.
 
 The example app in `example/` has every transition, a modal, the keyboard case and the benchmark screen.
@@ -120,19 +141,34 @@ Create one instance per app, outside render or in a `useState` initializer.
 | Option | Type | Default | |
 |---|---|---|---|
 | `getTheme` | `() => T` | required | Returns the current theme. Must be synchronous. |
-| `setTheme` | `(theme: T) => void` | required | Applies the theme. Called while the snapshot is on screen. |
+| `setTheme` | `(theme: T) => void` | required | Applies the theme. Called while the snapshot is on screen, and has to update what React renders in the same tick (see below). |
 | `transition` | `'reveal' \| 'inverseReveal' \| 'wipe' \| 'crossfade'` | `reveal` with an origin, else `crossfade` | App-wide default. |
 | `shape` | `Shape` | a circle | Default shape for `reveal` and `inverseReveal`. |
 | `wipeDirection` | `'up' \| 'down' \| 'left' \| 'right'` | `'up'` | Default direction for `wipe`. |
-| `durations` | `Partial<Record<TransitionType, number>>` | 450 / 450 / 400 / 300 ms | Per transition type, in ms. |
+| `durations` | `Partial<Record<TransitionType, number>>` | 450 / 450 / 400 / 300 ms | Per transition type, in ms. Anything non-finite, 0 or below, or over 10 000 falls back to the default. |
 | `onError` | `(error: unknown) => void` | `console.warn` | Receives native errors. The theme still applies if the snapshot fails. |
-| `onSettled` | `(info: SettledInfo) => void` | none | Called when a switch finishes, with `{ transition, prepareMs, totalMs }`. `transition` is `null` if the switch didn't animate. |
+| `onSettled` | `(info: SettledInfo) => void` | none | Called when a switch finishes, with `{ transition, prepareMs, totalMs }`. |
+
+- `setTheme` has to update what React renders in the same tick. Don't `await` anything before the update and don't
+  wrap it in `startTransition`. If the update is deferred, the animation runs over the old theme and the new one
+  appears all at once afterwards.
+- If `setTheme` throws, the package removes the snapshot and releases the held theme, and `switchTo` rejects with
+  that error. That switch gets no `onSettled` call.
+- In `onSettled`, `transition` is `null` when no snapshot was taken (the theme switched without animating). If a
+  snapshot was taken, `transition` is the type, even when native ended up showing no animation (say, Android's
+  animator duration scale is 0).
+- If starting the animation fails, `onError` runs first, then `onSettled`.
+- Same-theme calls get no `onSettled`, and neither do calls that a newer call replaced.
+- If `onError` or `onSettled` throws, the error goes to `console.warn` and the theme still applies.
 
 ### `reveal.setOrigin(point, viewTag?)`
 
-Sets the origin for the next switch only. `point` is in window points (`pageX` / `pageY` space) and `viewTag` is
-the tapped view. On Android it tells the package which window to snapshot (see [Modals](#modals)).
+Sets the origin for the next switch only. `point` is in `pageX` / `pageY` space and `viewTag` is the tapped view.
 `originFromPress` returns both. Call it from the press handler, before `switchTo`.
+- Android: `viewTag` tells the package which window to snapshot (see [Modals](#modals)).
+- iOS: `viewTag` identifies the React root that `point` is measured in. Inside a `pageSheet` or `formSheet` modal
+  that root isn't at the top of the window, so pass the tag there. Without a tag, `point` is treated as window
+  points.
 
 ### `reveal.switchTo(theme, options?): Promise<void>`
 
@@ -150,6 +186,7 @@ Switches to `theme` with an animation.
 - The newest `switchTo` call wins. An older call still waiting for its snapshot does nothing.
 - If the snapshot fails, `setTheme` still runs without animation, so the theme always applies.
 - The promise resolves once the theme is set, before the animation ends. Use `onSettled` if you need the end.
+- It only rejects if `setTheme` throws.
 
 ### `reveal.useStart()`
 
@@ -174,8 +211,11 @@ animation has shown the new theme.
 ### `originFromPress(event, fallbackView?): Promise<PressOrigin | null>`
 
 Returns `{ point, viewTag }` for a press event, where `point` is the touch point (`pageX`, `pageY`) and `viewTag`
-is `event.nativeEvent.target`. If the event has no touch point, it measures `fallbackView` with `measureInWindow`
-and returns its centre, or `null` if you didn't pass a `fallbackView`.
+is `event.nativeEvent.target`. If the event has no finite touch point, it measures `fallbackView` with
+`measureInWindow` and returns its centre, or `null` if you didn't pass a `fallbackView`.
+
+Call it synchronously in the press handler, before any `await`, and pass a view that's mounted. React Native never
+calls back `measureInWindow` for an unmounted view, so the promise would never settle.
 
 ### `resolveTransition(input): Transition`
 
@@ -233,7 +273,11 @@ const STAR: Shape = {
   inscribedRadius: 21.99,
 }
 
-await reveal.switchTo('dark', { transition: 'reveal', shape: STAR })
+const onPress = async (event: GestureResponderEvent) => {
+  const origin = await originFromPress(event)
+  if (origin) reveal.setOrigin(origin.point, origin.viewTag) // a reveal with no origin falls back to crossfade
+  await reveal.switchTo('dark', { transition: 'reveal', shape: STAR })
+}
 ```
 
 - `path`: SVG path data, filled with the nonzero rule on both platforms.
@@ -241,7 +285,10 @@ await reveal.switchTo('dark', { transition: 'reveal', shape: STAR })
 - `inscribedRadius`: distance from the anchor to the nearest edge of the shape. The package uses it to work out
   the scale at which the shape covers the whole window, so use a value at or below the real distance. Too large a
   value makes the final scale too small, and whatever the shape missed snaps to the new theme at the end.
-- If the path doesn't parse, the package falls back to the circle.
+- Separate the arc flags (`a9 9 0 0 1 18 0`, not `a9 9 0 0118 0`). Android's parser can't split compact flags,
+  although iOS reads them fine.
+- If the path doesn't parse, the package falls back to the circle and logs a warning naming the path. On Android,
+  a path with compact arc flags ends up as the circle.
 
 ## Modals
 
@@ -267,13 +314,21 @@ A switch from inside a React Native `<Modal>` animates too.
 - New Architecture only.
 - The keyboard isn't in the snapshot. On iOS it changes theme immediately, and on Android it keeps its own theme.
 - Starting a second switch mid-animation ends the first one immediately. Android shows one frame of the end state.
+  On iOS the second snapshot captures the first animation's current frame, and the second animation starts from
+  that.
 - Android modal: tapping while the modal is still sliding in shows about 2 frames of live content on top of it.
 - Android modal: with stacked modals, only the target dialog ends up in the snapshot.
 - Android modal: if the dialog window is smaller than the screen, the strip outside it stays live.
-- Closing a modal in the same handler that switches ("close on select") means no animation. Switch once the modal
-  has closed.
+- Closing a modal in the same handler that switches ("close on select"). Switch once the modal has closed.
+  - Android: the switch doesn't animate.
+  - iOS: the reveal plays over a snapshot that still shows the modal.
 - To follow the system theme, listen to `Appearance` and call `switchTo` without an origin, which gives you a
   `crossfade`. The example app does this.
+
+## Testing
+
+Under `jest-expo` the package's native module mock loads automatically, and `switchTo` applies the theme
+immediately without animating.
 
 ## Performance
 
@@ -301,10 +356,11 @@ Both Android phones drew at 60 Hz during these runs. Lower is better in every co
 | Mi 11 Lite | skia | 432.9 | 400.5 | 18.4 | 25.0 | 68 | 1 | 25 | 374.9 |
 | Pixel 8 Pro | ours | 72.3 | 60.1 | 5.6 | 8.0 | 0 | 0 | 4 | 28.0 |
 | Pixel 8 Pro | theme-switch-animation | 62.8 | 58.1 | 8.3 | 9.6 | 5 | 1 | 3 | 25.1 |
-| Pixel 8 Pro | skia | 313.4 | 285.4 | 7.1 (1) | 9.7 (1) | 0 (1) | 0 (1) | 9 | 265.7 |
+| Pixel 8 Pro | skia | 313.4 | 285.4 | 7.1 (1) | 9.7 (1) | 0 (1) | 0 (1) | 9 (1) | 265.7 |
 
-(1) Skia drew at 30 Hz on the Pixel 8 Pro, so its frame times, janky share and late frames there can't be compared
-with the other two.
+(1) Skia drew at 30 Hz on the Pixel 8 Pro, so its frame times, janky share, late frames and missed vsyncs there
+can't be compared with the other two. Its missed vsyncs are counted in 33 ms intervals, so 9 is roughly 18 at 60
+Hz.
 
 - Overlay frame: time from the touch to the first frame with the overlay on screen. On the Mi 11 Lite a system
   trace confirmed which frame that is. On the Pixel 8 Pro it rests on `gfxinfo` data alone.
@@ -332,11 +388,14 @@ gives a pixel-exact snapshot. On the Mi 11 Lite a system trace shows this readba
 instead. I couldn't get a system trace on the Pixel 8 Pro, so there the same readback cost is the likely cause but
 not a measured one.
 
-On the first switch in a fresh process (no warm-up), ours is slower in four places. Each value is a median of only
-3 runs, so these numbers are noisy.
+On the first switch in a fresh process (no warm-up), ours is slower in seven places. Each value is a median of
+only 3 runs, so these numbers are noisy.
 - Pixel 8 Pro, overlay frame: 121.2 ms vs 96.7 ms for `theme-switch-animation` (+25%).
 - Pixel 8 Pro, snapshot JS: 100.5 ms vs 71.7 ms for `theme-switch-animation` (+40%).
+- Pixel 8 Pro, late frames: 1 vs 0 for `theme-switch-animation`.
+- Pixel 8 Pro, missed vsyncs: 5 vs 4 for `theme-switch-animation` (one frame interval).
 - Pixel 8 Pro, JS max gap: 36.1 ms vs 29.2 ms for `theme-switch-animation` (+24%).
+- Mi 11 Lite, late frames: 1 vs 0 for `skia` (`theme-switch-animation` also has 1).
 - Mi 11 Lite, JS max gap: 93.9 ms vs 41.2 ms for `theme-switch-animation` (2.3 times), which is also 2.4 times our
   own warm value.
 
@@ -345,8 +404,8 @@ ms). The full first-switch table is in [`benchmark/RESULTS.md`](benchmark/RESULT
 
 ### iOS (simulator)
 
-These numbers are from the iOS 26.5 simulator on a Mac, not a phone. Frame metrics aren't available on the
-simulator.
+These numbers are from the iOS 26.5 simulator on a Mac, not a phone. There are no frame metrics, because `xctrace`
+doesn't support hitches on the simulator and this pass has no `CADisplayLink` frame probe.
 
 | Library | Snapshot, JS (ms) | JS max gap (ms) |
 |---|---|---|
