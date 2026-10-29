@@ -6,6 +6,10 @@ on:
       version:
         description: 'The version to release: a semver such as 0.1.0, or patch, minor or major'
         required: true
+      publish:
+        description: 'Publish to npm. Turn off to only tag and release a version that you already published by hand.'
+        type: boolean
+        default: true
 
 concurrency:
   group: release
@@ -52,13 +56,8 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci --ignore-scripts
-
-      # Only the check's result reaches this step, never the token.
-      - name: Check for an npm token
-        id: npm
-        env:
-          HAS_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
-        run: echo "has_token=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+      # Trusted publishing (OIDC) needs npm 11.5.1 or newer, and Node 22 ships npm 10.
+      - run: npm install -g npm@11
 
       - name: Bump the version
         env:
@@ -94,22 +93,22 @@ jobs:
             exit 1
           fi
 
-      # Same steps as prepublishOnly. The publish steps run with --ignore-scripts so no package script runs in
-      # the step that holds the token.
+      # Same steps as prepublishOnly. The publish step runs with --ignore-scripts so no package script runs in
+      # the step that can mint the publish credential.
       - name: Build
         run: |
           npm run clean
           npm run build
 
+      # npm trusted publishing, so no NPM_TOKEN secret: npm swaps the job's OIDC token for a short-lived publish
+      # credential and adds provenance. On npmjs.com, set this repo and release.yml as the trusted publisher.
       - name: Check the package
-        if: steps.npm.outputs.has_token != 'true'
+        if: ${{ !inputs.publish }}
         run: npm publish --dry-run --ignore-scripts --access public
 
       - name: Publish to npm
-        if: steps.npm.outputs.has_token == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --ignore-scripts --provenance --access public
+        if: ${{ inputs.publish }}
+        run: npm publish --ignore-scripts --access public
 
       # Checkout doesn't persist credentials, so only this step can push.
       - name: Tag and push
@@ -126,7 +125,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$TAG" --title "$TAG" --generate-notes
-
-      - name: Publish step skipped
-        if: steps.npm.outputs.has_token != 'true'
-        run: echo "No NPM_TOKEN secret is set. Run npm publish from a checkout of $TAG."
