@@ -136,7 +136,7 @@ import {
 
 ### `createThemeReveal<T>(options): ThemeReveal<T>`
 
-Create one instance per app, outside render or in a `useState` initializer.
+Create one instance per app, at module scope (outside render).
 
 | Option | Type | Default | |
 |---|---|---|---|
@@ -158,7 +158,8 @@ Create one instance per app, outside render or in a `useState` initializer.
   snapshot was taken, `transition` is the type, even when native ended up showing no animation (say, Android's
   animator duration scale is 0).
 - If starting the animation fails, `onError` runs first, then `onSettled`.
-- Same-theme calls get no `onSettled`, and neither do calls that a newer call replaced.
+- Same-theme calls get no `onSettled`. A call that a newer call replaced before its snapshot was taken gets no
+  `onSettled` either, but one replaced mid-animation still does.
 - If `onError` or `onSettled` throws, the error goes to `console.warn` and the theme still applies.
 
 ### `reveal.setOrigin(point, viewTag?)`
@@ -186,7 +187,7 @@ Switches to `theme` with an animation.
 - The newest `switchTo` call wins. An older call still waiting for its snapshot does nothing.
 - If the snapshot fails, `setTheme` still runs without animation, so the theme always applies.
 - The promise resolves once the theme is set, before the animation ends. Use `onSettled` if you need the end.
-- It only rejects if `setTheme` throws.
+- It only rejects if `getTheme` or `setTheme` throws.
 
 ### `reveal.useStart()`
 
