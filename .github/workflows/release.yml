@@ -74,6 +74,10 @@ jobs:
               -e "s/^version = '[^']*'/version = '$next'/" \
               -e "s/versionName \"[^\"]*\"/versionName \"$next\"/" \
               android/build.gradle
+            if ! grep -qF "version = '$next'" android/build.gradle || ! grep -qF "versionName \"$next\"" android/build.gradle; then
+              echo "::error::android/build.gradle has no version or versionName line to update"
+              exit 1
+            fi
             git commit -am "chore: release $next"
           fi
           echo "TAG=v$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
