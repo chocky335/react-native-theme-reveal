@@ -1,5 +1,7 @@
 package expo.modules.themereveal
 
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,6 +16,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
+import android.widget.FrameLayout
 import com.facebook.react.uimanager.RootView
 import com.facebook.react.views.modal.ReactModalHostView
 
@@ -30,6 +34,9 @@ internal class Snapshot(
 )
 
 internal object WindowSnapshot {
+  // Activity-window bitmaps for the next capture. Main thread only.
+  val kept = KeptBitmaps<Bitmap>(1, { it.width }, { it.height }, { it.isRecycled }) { it.recycle() }
+
   fun capture(activity: Activity, root: View?, handler: Handler, onResult: (Snapshot?) -> Unit) {
     val window = activity.window
     val decor = window?.decorView as? ViewGroup
@@ -39,7 +46,7 @@ internal object WindowSnapshot {
     }
     val screen = locationOf(decor)
     if (root == null || root === decor) {
-      capture(window, decor.width, decor.height, handler) { bitmap ->
+      capture(window, decor.width, decor.height, handler, true) { bitmap ->
         onResult(bitmap?.let { Snapshot(it, decor, decor, 0, 0, screen[0], screen[1]) })
       }
       return
@@ -62,7 +69,7 @@ internal object WindowSnapshot {
     }
     capturePair(window, decor.width, decor.height, dialog, dialogDecor.width, dialogDecor.height, handler) { back, front ->
       if (back == null || front == null) {
-        back?.recycle()
+        back?.let(kept::give)
         front?.recycle()
         onResult(null)
         return@capturePair
@@ -76,7 +83,7 @@ internal object WindowSnapshot {
         front.recycle()
       }
       if (!composed) {
-        back.recycle()
+        kept.give(back)
         onResult(null)
         return@capturePair
       }
@@ -103,22 +110,28 @@ internal object WindowSnapshot {
 
   fun locationOf(view: View): IntArray = IntArray(2).also { view.getLocationOnScreen(it) }
 
-  fun capture(window: Window, width: Int, height: Int, handler: Handler, onResult: (Bitmap?) -> Unit) {
+  // pooled: the bitmap comes from kept and goes back there (the activity window). A dialog window's bitmap doesn't.
+  fun capture(window: Window, width: Int, height: Int, handler: Handler, pooled: Boolean, onResult: (Bitmap?) -> Unit) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || width <= 0 || height <= 0) {
       onResult(null)
       return
     }
-    val bitmap = try {
+    val bitmap = (if (pooled) kept.take(width, height) else null) ?: try {
       Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     } catch (_: OutOfMemoryError) {
       onResult(null)
       return
     }
+    copyInto(window, bitmap, handler, { if (pooled) kept.give(bitmap) else bitmap.recycle() }, onResult)
+  }
+
+  // Copies window into bitmap. On failure calls drop, then onResult(null).
+  private fun copyInto(window: Window, bitmap: Bitmap, handler: Handler, drop: () -> Unit, onResult: (Bitmap?) -> Unit) {
     val listener = PixelCopy.OnPixelCopyFinishedListener { result ->
       if (result == PixelCopy.SUCCESS) {
         onResult(bitmap)
       } else {
-        bitmap.recycle()
+        drop()
         onResult(null)
       }
     }
@@ -126,7 +139,7 @@ internal object WindowSnapshot {
       try {
         PixelCopy.request(window, bitmap, listener, handler)
       } catch (_: RuntimeException) {
-        bitmap.recycle()
+        drop()
         onResult(null)
       }
       return
@@ -151,12 +164,69 @@ internal object WindowSnapshot {
         PixelCopy.request(window, bitmap, toFront, copyHandler)
       } catch (_: RuntimeException) {
         handler.post {
-          bitmap.recycle()
+          drop()
           onResult(null)
         }
       }
     }
   }
+
+  // Off main. Starts the copy thread and loads the classes the first switch needs, so it pays for neither.
+  fun warmUp() {
+    copyHandler
+    // Class literals load the classes without running any of their code.
+    listOf(
+      RevealOverlayView::class.java,
+      WipeDirection::class.java,
+      Snapshot::class.java,
+      Frame::class.java,
+      PixelCopy::class.java,
+      PixelCopy.OnPixelCopyFinishedListener::class.java,
+      ValueAnimator::class.java,
+      AnimatorListenerAdapter::class.java,
+      LinearInterpolator::class.java,
+      FrameLayout.LayoutParams::class.java,
+    )
+    Motion.easeInOut(Motion.growth(0.5, 0.1, 1.0).toFloat())
+    ShapePath.circle()
+  }
+
+  // Main thread. If kept has room, allocates a bitmap of the activity window's size on the copy thread, copies the
+  // window into it once and keeps it. The first copy into a bitmap is the slow one (roughly twice as long as later
+  // ones into the same bitmap on a Pixel 8 Pro), so the first switch gets a warm one.
+  fun keepOne(activity: Activity?, handler: Handler) {
+    val window = activity?.window ?: return
+    val decor = window.decorView
+    val width = decor.width
+    val height = decor.height
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || keeping || width <= 0 || height <= 0 ||
+      !kept.hasRoom(width, height)
+    ) {
+      return
+    }
+    keeping = true
+    copyHandler.post {
+      val bitmap = try {
+        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+      } catch (_: OutOfMemoryError) {
+        null
+      }
+      handler.post {
+        if (bitmap == null) {
+          keeping = false
+          return@post
+        }
+        val keep = {
+          keeping = false
+          kept.fill(bitmap)
+        }
+        copyInto(window, bitmap, handler, { keep() }) { if (it != null) keep() }
+      }
+    }
+  }
+
+  // A keepOne is in flight. Main thread only.
+  private var keeping = false
 
   // Never quit the copy thread. Without it PixelCopy never calls back, prepare never resolves and the switch never
   // applies the theme.
@@ -184,8 +254,8 @@ internal object WindowSnapshot {
       pending--
       if (pending == 0) onResult(results[0], results[1])
     }
-    capture(first, firstW, firstH, handler) { done(0, it) }
-    capture(second, secondW, secondH, handler) { done(1, it) }
+    capture(first, firstW, firstH, handler, true) { done(0, it) }
+    capture(second, secondW, secondH, handler, false) { done(1, it) }
   }
 
   // PixelCopy doesn't capture the dim behind a dialog: the compositor draws it.

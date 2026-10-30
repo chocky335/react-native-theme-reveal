@@ -2,6 +2,9 @@ package expo.modules.themereveal
 
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.content.ComponentCallbacks2
+import android.content.Context
+import android.content.res.Configuration
 import android.graphics.PointF
 import android.os.Build
 import android.os.Handler
@@ -19,6 +22,7 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+import expo.modules.kotlin.types.convert
 
 internal class PointRecord : Record {
   @Field val x: Double = 0.0
@@ -58,6 +62,20 @@ class ThemeRevealModule : Module() {
   private var generation = 0
   private val failsafe = Runnable { removeOverlay() }
 
+  // Frees the kept bitmaps when the app is hidden or low on memory, or the screen changes size. Runs on main.
+  private val memoryCallbacks = object : ComponentCallbacks2 {
+    override fun onTrimMemory(level: Int) = WindowSnapshot.kept.onTrimMemory(level)
+
+    override fun onConfigurationChanged(newConfig: Configuration) =
+      WindowSnapshot.kept.onScreenSize(newConfig.screenWidthDp, newConfig.screenHeightDp)
+
+    @Deprecated("Deprecated in Java")
+    override fun onLowMemory() = WindowSnapshot.kept.clear()
+  }
+
+  // Context memoryCallbacks are registered with.
+  private var callbacksContext: Context? = null
+
   override fun definition() = ModuleDefinition {
     Name("ThemeReveal")
 
@@ -74,16 +92,49 @@ class ThemeRevealModule : Module() {
       removeOverlay()
     }.runOnQueue(Queues.MAIN)
 
+    // Runs off main.
+    AsyncFunction("warmUp") { keepBitmap: Boolean, promise: Promise ->
+      warmUp(keepBitmap, promise)
+    }
+
+    OnCreate {
+      callbacksContext = appContext.reactContext?.applicationContext?.also {
+        it.registerComponentCallbacks(memoryCallbacks)
+      }
+    }
+
     OnActivityDestroys {
       generation++
       removeOverlay()
+      WindowSnapshot.kept.clear()
     }
 
     OnDestroy {
+      callbacksContext?.unregisterComponentCallbacks(memoryCallbacks)
+      callbacksContext = null
       mainHandler.post {
         generation++
         removeOverlay()
+        WindowSnapshot.kept.clear()
       }
+    }
+  }
+
+  // Off main: the copy thread, the classes and the transition's argument conversion. Expo converts a Record with
+  // Kotlin reflection, and the first conversion blocked the main thread on the first start: 85-102 ms on a Mi 11
+  // Lite, 18-27 ms on a Pixel 8 Pro. Then, on main, a kept bitmap of the window's size if keepBitmap.
+  private fun warmUp(keepBitmap: Boolean, promise: Promise) {
+    val error = try {
+      WindowSnapshot.warmUp()
+      convert<TransitionRecord>(SAMPLE_TRANSITION)
+      null
+    } catch (thrown: RuntimeException) {
+      thrown
+    }
+    mainHandler.post {
+      if (keepBitmap) WindowSnapshot.kept.keep = true
+      WindowSnapshot.keepOne(appContext.currentActivity, mainHandler)
+      if (error == null) promise.resolve() else promise.reject("ERR_THEME_REVEAL_WARM_UP", error.message, error)
     }
   }
 
@@ -111,7 +162,7 @@ class ThemeRevealModule : Module() {
       if (ticket != generation || activity.isFinishing || activity.isDestroyed || !isResumed(activity) ||
         !snapshot.host.isAttachedToWindow
       ) {
-        bitmap.recycle()
+        WindowSnapshot.kept.give(bitmap)
         promise.resolve(false)
         return@capture
       }
@@ -190,7 +241,7 @@ class ThemeRevealModule : Module() {
     overlay = null
     geometry = null
     (view.parent as? ViewGroup)?.removeView(view)
-    view.release()
+    view.release(WindowSnapshot.kept::give)
   }
 
   private fun findView(viewTag: Int): View? = try {
@@ -228,6 +279,14 @@ class ThemeRevealModule : Module() {
   }
 
   private companion object {
+    // Every field set, so the warm-up conversion hits every record type.
+    val SAMPLE_TRANSITION = mapOf(
+      "type" to "reveal",
+      "durationMs" to 0.0,
+      "origin" to mapOf("x" to 0.0, "y" to 0.0),
+      "shape" to mapOf("path" to "", "anchor" to mapOf("x" to 0.0, "y" to 0.0), "inscribedRadius" to 0.0),
+      "direction" to "up",
+    )
     const val FAILSAFE_MS = 1000L
     const val TAG = "ThemeReveal"
   }

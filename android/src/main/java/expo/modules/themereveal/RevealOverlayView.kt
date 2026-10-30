@@ -67,9 +67,10 @@ internal class RevealOverlayView(context: Context, private val snapshot: Bitmap)
     play(Mode.CROSSFADE, durationMs, onEnd)
   }
 
-  fun release() {
+  // Stops the animation and hands the snapshot off, either to the kept bitmaps or to be freed.
+  fun release(drop: (Bitmap) -> Unit) {
     stopAnimator()
-    snapshot.recycle()
+    drop(snapshot)
   }
 
   private fun stopAnimator() {
