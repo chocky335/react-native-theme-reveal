@@ -45,6 +45,10 @@ public class ThemeRevealModule: Module {
       self.removeOverlay()
     }.runOnQueue(.main)
 
+    // No-op on iOS: snapshotView(afterScreenUpdates:) keeps no thread or bitmap a warm-up could start early. It's
+    // here so the JS call resolves on both platforms.
+    AsyncFunction("warmUp") { (_: Bool) in }
+
     OnDestroy {
       if Thread.isMainThread {
         self.removeOverlay()

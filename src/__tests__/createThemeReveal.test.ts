@@ -6,7 +6,7 @@ import { createThemeReveal, type ThemeRevealOptions } from '../createThemeReveal
 
 jest.mock('../ThemeRevealModule', () => ({
   __esModule: true,
-  default: { prepare: jest.fn(), start: jest.fn(), cancel: jest.fn() },
+  default: { prepare: jest.fn(), start: jest.fn(), cancel: jest.fn(), warmUp: jest.fn() },
 }))
 
 type Theme = { name: string }
@@ -18,6 +18,7 @@ const dim: Theme = { name: 'dim' }
 const prepare = jest.mocked(ThemeRevealModule.prepare)
 const start = jest.mocked(ThemeRevealModule.start)
 const cancel = jest.mocked(ThemeRevealModule.cancel)
+const warmUp = jest.mocked(ThemeRevealModule.warmUp)
 
 const setup = (options: Partial<ThemeRevealOptions<Theme>> = {}) => {
   let current = light
@@ -56,6 +57,7 @@ beforeEach(() => {
   prepare.mockReset().mockResolvedValue(true)
   start.mockReset().mockResolvedValue(undefined)
   cancel.mockReset().mockResolvedValue(undefined)
+  warmUp.mockReset().mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -398,6 +400,81 @@ describe('useStart', () => {
 
     expect(onError).toHaveBeenCalledWith(error)
     expect(view.result.current).toBeNull()
+  })
+})
+
+describe('warm-up', () => {
+  it('warms up native with a kept bitmap when useStart mounts', async () => {
+    const { mount } = setup()
+
+    expect(warmUp).not.toHaveBeenCalled()
+
+    mount()
+    await act(async () => {})
+
+    expect(warmUp).toHaveBeenCalledTimes(1)
+    expect(warmUp).toHaveBeenCalledWith(true)
+  })
+
+  it('warms up without a kept bitmap when the warmUp option is false', async () => {
+    const { mount } = setup({ warmUp: false })
+
+    mount()
+    await act(async () => {})
+
+    expect(warmUp).toHaveBeenCalledTimes(1)
+    expect(warmUp).toHaveBeenCalledWith(false)
+  })
+
+  it('warms up once per instance', async () => {
+    const { mount } = setup()
+
+    mount(StrictMode)
+    const second = mount()
+    second.rerender({})
+    second.unmount()
+    mount()
+    await act(async () => {})
+
+    expect(warmUp).toHaveBeenCalledTimes(1)
+  })
+
+  it('warms up each instance', async () => {
+    setup().mount()
+    setup({ warmUp: false }).mount()
+    await act(async () => {})
+
+    expect(warmUp).toHaveBeenCalledTimes(2)
+    expect(warmUp).toHaveBeenNthCalledWith(1, true)
+    expect(warmUp).toHaveBeenNthCalledWith(2, false)
+  })
+
+  it('reports a warm-up rejection through onError and still switches', async () => {
+    const error = new Error('warm-up failed')
+    warmUp.mockRejectedValueOnce(error)
+    const { reveal, getTheme, onError, mount } = setup()
+    mount()
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(onError).toHaveBeenCalledWith(error)
+    expect(getTheme()).toBe(dark)
+    expect(start).toHaveBeenCalledWith({ type: 'crossfade', durationMs: 300 })
+  })
+
+  it('reports a warm-up that throws at once through onError and still switches', async () => {
+    const error = new Error('no warmUp')
+    warmUp.mockImplementationOnce(() => {
+      throw error
+    })
+    const { reveal, getTheme, onError, mount } = setup()
+    mount()
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(onError).toHaveBeenCalledWith(error)
+    expect(getTheme()).toBe(dark)
+    expect(start).toHaveBeenCalledTimes(1)
   })
 })
 

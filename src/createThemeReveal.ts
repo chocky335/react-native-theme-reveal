@@ -1,4 +1,4 @@
-import { useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect } from 'react'
 
 import ThemeRevealModule from './ThemeRevealModule'
 import { resolveTransition } from './resolveTransition'
@@ -20,6 +20,8 @@ export type ThemeRevealOptions<T> = {
   wipeDirection?: WipeDirection
   onError?: (error: unknown) => void
   onSettled?: (info: SettledInfo) => void
+  // Keep one window-size bitmap for the next snapshot (Android). Default true.
+  warmUp?: boolean
 }
 
 export type SwitchOptions = {
@@ -63,6 +65,7 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
   const store = createStore<RevealState<T>>({ pending: null, held: null })
   let pendingOrigin: { point: Point; viewTag?: number } | null = null
   let latestId = 0
+  let warmedUp = false
 
   const setOrigin = (point: Point, viewTag?: number) => {
     pendingOrigin = { point, viewTag }
@@ -119,8 +122,21 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
     store.set({ pending: { id, transition, startedAt, prepareMs } })
   }
 
+  // Once per instance: start the native capture path early so the first switch doesn't pay for it.
+  const warmUp = () => {
+    if (warmedUp) return
+    warmedUp = true
+    try {
+      ThemeRevealModule.warmUp(options.warmUp ?? true).catch(onError)
+    } catch (error) {
+      onError(error)
+    }
+  }
+
   const useStart = () => {
     const pending = useStore(store, (state) => state.pending)
+
+    useEffect(warmUp, [])
 
     useLayoutEffect(() => {
       if (!pending || store.get().pending !== pending) return

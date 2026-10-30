@@ -7,6 +7,7 @@ type NativeMock = {
   prepare: jest.Mock<Promise<boolean>, [number | undefined]>
   start: jest.Mock<Promise<void>, [Transition]>
   cancel: jest.Mock<Promise<void>, []>
+  warmUp: jest.Mock<Promise<void>, [boolean]>
 }
 
 jest.mock('expo', () => {
@@ -15,6 +16,7 @@ jest.mock('expo', () => {
     prepare: jest.fn(() => Promise.resolve(true)),
     start: jest.fn(() => Promise.resolve()),
     cancel: jest.fn(() => Promise.resolve()),
+    warmUp: jest.fn(() => Promise.resolve()),
   }
   return {
     ...actual,
@@ -53,5 +55,11 @@ describe('ThemeRevealModule', () => {
   it('calls native cancel', async () => {
     await ThemeRevealModule.cancel()
     expect(native.cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes keepBitmap to native warmUp', async () => {
+    await ThemeRevealModule.warmUp(false)
+    expect(native.warmUp).toHaveBeenCalledTimes(1)
+    expect(native.warmUp).toHaveBeenCalledWith(false)
   })
 })

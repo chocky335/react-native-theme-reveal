@@ -4,4 +4,5 @@ module.exports = {
   prepare: async () => false,
   start: async () => {},
   cancel: async () => {},
+  warmUp: async () => {},
 }
