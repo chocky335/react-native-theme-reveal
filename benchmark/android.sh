@@ -15,6 +15,8 @@
 #   BENCH_PAUSED_FILE  if this file exists, the pass stops before the next run.
 #   BENCH_COLD=1       first switch in a fresh process: no warm-up, the app is force-stopped 1 s before each
 #                      run, and output goes to results/cold/.
+# Before the runs, the pass installs the app's Baseline Profiles and compiles the app with them (speed-profile), like
+# a Play install does. A plain adb install compiles nothing (verify, Android 13) or everything (speed, Android 17).
 set -u
 if (( $# < 3 )); then
   echo "usage: android.sh <serial> <runs> <lib>..." >&2
@@ -92,6 +94,22 @@ if a shell dumpsys window | grep -qE 'mDreamingLockscreen=true|showing=true'; th
   exit 1
 fi
 
+# The app's Baseline Profiles (all three libraries ship in the same APK): profileinstaller writes them on a broadcast, then the app gets
+# compiled with them (result 2: an earlier pass already wrote them). Needs profileinstaller 1.4.0 or later on Android 15 and later
+# (example/plugins/withProfileInstaller.js).
+dexopt() { a shell dumpsys package dexopt | grep -A2 "\[$PKG\]" | grep -m1 -oE 'status=[^]]+' }
+a shell am start -W -n $PKG/.MainActivity > /dev/null
+sleep 2
+installed=$(a shell am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE \
+  $PKG/androidx.profileinstaller.ProfileInstallReceiver | grep -oE 'result=[0-9]+')
+a shell am force-stop $PKG
+a shell cmd package compile -f -m speed-profile $PKG > /dev/null
+COMPILED=$(dexopt)
+if [[ $installed != result=[12] || $COMPILED != status=speed-profile ]]; then
+  echo "Baseline Profile not applied on $SERIAL: profileinstaller $installed, $COMPILED" >&2
+  exit 1
+fi
+
 DEVICE=$(a shell getprop ro.product.model | tr -d '\r' | tr ' ' '-')
 # Any scale other than 1 changes Android animator durations (ours, theme-switch-animation) but not Reanimated's
 # (Skia), so stop the pass.
@@ -108,7 +126,7 @@ RESULTS=$HERE/results
 [[ -n ${BENCH_COLD:-} ]] && RESULTS=$RESULTS/cold
 mkdir -p $RESULTS/raw
 WARMUP=$(mktemp -d)
-echo "device $DEVICE, scales ${(j:,:)SCALES}, $RUNS rounds of ${LIBS[*]}"
+echo "device $DEVICE, scales ${(j:,:)SCALES}, $COMPILED, $RUNS rounds of ${LIBS[*]}"
 
 if [[ -z ${BENCH_COLD:-} ]]; then
   for lib in $LIBS; do

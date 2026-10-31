@@ -143,6 +143,13 @@ python3 benchmark/report.py benchmark/results/*.json
 - `android.sh` writes each run's gfxinfo dump to `results/raw/<device>-<lib>-<round>.txt` and the run itself to
   `results/<device>-<lib>-<round>.json`, including its round, its position and the round's order. `<device>` is
   `ro.product.model`.
+- Before the runs it applies the app's Baseline Profiles the way a Play install would: a profileinstaller
+  broadcast writes them, and `cmd package compile -f -m speed-profile` compiles the app with them. If the broadcast
+  fails or the app isn't `speed-profile` afterwards, the pass stops. All three libraries live in the one APK, so
+  they all get the same treatment. A plain `adb install` compiles nothing ahead of time on Android 13 (`verify`)
+  and everything on Android 17 (`speed`), so passes from before this change weren't compiled the same way. The
+  example adds `androidx.profileinstaller` 1.4.0 (`example/plugins/withProfileInstaller.js`) because the 1.3.1
+  that androidx pulls in returns "unsupported ART version" on Android 17.
 - It reads the three animation scales once per pass, records them in each run, and stops if any of them isn't 1.
 - It gets the Run button position from the `BENCH-READY` log line, checks that the example has focus before
   tapping, and never presses BACK. Every adb call runs under a 120 s watchdog (`ADB_WATCHDOG`).

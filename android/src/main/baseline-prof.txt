@@ -1,0 +1,4 @@
+# Baseline Profile for react-native-theme-reveal: every class and method of the module, so a Play install compiles the
+# switch path ahead of time.
+HSPLexpo/modules/themereveal/**->**(**)**
+Lexpo/modules/themereveal/**;

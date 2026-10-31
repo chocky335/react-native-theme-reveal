@@ -148,6 +148,7 @@ Create one instance per app, at module scope (outside render).
 | `durations` | `Partial<Record<TransitionType, number>>` | 450 / 450 / 400 / 300 ms | Per transition type, in ms. Anything non-finite, 0 or below, or over 10 000 falls back to the default. |
 | `onError` | `(error: unknown) => void` | `console.warn` | Receives native errors. The theme still applies if the snapshot fails. |
 | `onSettled` | `(info: SettledInfo) => void` | none | Called when a switch finishes, with `{ transition, prepareMs, totalMs }`. |
+| `warmUp` | `boolean` | `true` | Android only: keeps one window-size bitmap around for the next snapshot. See [Warm-up](#warm-up). |
 
 - `setTheme` has to update what React renders in the same tick. Don't `await` anything before the update and don't
   wrap it in `startTransition`. If the update is deferred, the animation runs over the old theme and the new one
@@ -192,7 +193,8 @@ Switches to `theme` with an animation.
 ### `reveal.useStart()`
 
 Hook that starts the animation once React has committed the new theme. Mount it once, in a component that
-re-renders when the theme changes (the root is a good spot).
+re-renders when the theme changes (the root is a good spot). The first time it mounts, it also warms up the native
+side (see [Warm-up](#warm-up)).
 
 ### `reveal.useHeldTheme(): T | null`
 
@@ -225,8 +227,8 @@ internally, and it's exported for tests and custom flows.
 
 ### `ThemeRevealModule`
 
-The native module, with `prepare(viewTag?)`, `start(transition)` and `cancel()`. `createThemeReveal` calls it for
-you, so normally you won't need it.
+The native module, with `prepare(viewTag?)`, `start(transition)`, `cancel()` and `warmUp(keepBitmap)`.
+`createThemeReveal` calls it for you, so normally you won't need it.
 
 ### Types
 
@@ -308,6 +310,49 @@ A switch from inside a React Native `<Modal>` animates too.
 - The app has to be in the foreground. If it's paused or in the background, a switch applies the theme without
   animating.
 - If a snapshot never gets its animation start, it's removed after 1 s, so it can't get stuck on screen.
+
+## Warm-up
+
+The first switch in a process used to pay for work that later switches skip. To move that out of the way,
+`useStart()` calls the native `warmUp` once per instance, the first time it mounts. On Android the warm-up runs off
+the main thread and:
+- starts the thread that copies the snapshot,
+- loads the snapshot and animation classes,
+- prepares the argument conversion for `start`. Expo uses Kotlin reflection the first time it converts those
+  arguments, and without the warm-up that blocks the main thread on the first `start`: 85-102 ms on a Mi 11 Lite,
+  18-27 ms on a Pixel 8 Pro.
+
+With `warmUp: true` (the default), Android also keeps one bitmap the size of the window. The warm-up allocates it
+and copies the window into it once, because the first copy into a fresh bitmap is the slow one. After that every
+snapshot copies into the same bitmap and gets it back when the snapshot goes away. Inside a modal, the copy of the
+dialog window still allocates a new bitmap each time.
+
+That bitmap is the memory cost: one ARGB bitmap at 4 bytes per pixel, so about 10 MB at 1080x2400, held while the
+app runs. It's freed when the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or above), on
+low memory, when the screen size changes and when the activity is destroyed, and the next switch keeps a new one.
+If you have several instances, the bitmap stays as long as any of them has `warmUp: true`.
+
+With `warmUp: false` you still get the thread, the classes and the conversion, but no bitmap is kept and every
+snapshot allocates its own.
+
+On iOS `warmUp` does nothing, since the snapshot there has no thread or bitmap to prepare. If the warm-up fails,
+the error goes to `onError` and switches keep working.
+
+### Baseline Profile
+
+The Android library ships a Baseline Profile (`android/src/main/baseline-prof.txt`) with all of its classes and
+methods in it. The Android Gradle Plugin packs it into the library's AAR and merges it into the app's
+`assets/dexopt/baseline.prof`, so a Play install compiles that code ahead of time and the first switch doesn't run
+it in the interpreter.
+
+A local `adb install` doesn't apply profiles. To get the same result as Play, add `androidx.profileinstaller` 1.4.0
+or later to the app (1.3.x does nothing on Android 15 and later) and run:
+
+```sh
+adb shell am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE <package>/androidx.profileinstaller.ProfileInstallReceiver
+adb shell am force-stop <package>
+adb shell cmd package compile -f -m speed-profile <package>
+```
 
 ## Limits
 
