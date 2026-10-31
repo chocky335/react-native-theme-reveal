@@ -9,6 +9,7 @@ import android.graphics.PointF
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
 import android.view.Gravity
@@ -26,6 +27,20 @@ import expo.modules.kotlin.modules.ModuleDefinition
 // overlay at (screenX, screenY).
 private class OverlayGeometry(val cover: View, val rootX: Int, val rootY: Int, val screenX: Int, val screenY: Int)
 
+// Snapshot from capture(), kept out of the window until prepare() attaches it. root is the window root it shows.
+private class HeldCapture(
+  val ticket: Int,
+  val activity: Activity,
+  val root: View?,
+  val snapshot: Snapshot,
+  val takenAtMs: Long,
+)
+
+// capture() whose PixelCopy is still running. A prepare() for the same window sets waiter and gets the snapshot.
+private class PendingCapture(val activity: Activity, val root: View?) {
+  var waiter: ((Snapshot?) -> Unit)? = null
+}
+
 class ThemeRevealModule : Module() {
   private val mainHandler = Handler(Looper.getMainLooper())
   private var overlay: RevealOverlayView? = null
@@ -33,6 +48,10 @@ class ThemeRevealModule : Module() {
   private var started: Promise? = null
   private var generation = 0
   private val failsafe = Runnable { removeOverlay() }
+  private var held: HeldCapture? = null
+  private var pendingCapture: PendingCapture? = null
+  private var captureTicket = 0
+  private val captureExpiry = Runnable { voidCapture("expired") }
 
   // Frees the kept bitmaps when the app is hidden or low on memory, or the screen changes size. Runs on main.
   private val memoryCallbacks = object : ComponentCallbacks2 {
@@ -59,8 +78,17 @@ class ThemeRevealModule : Module() {
       start(TransitionArgs.from(transition), promise)
     }.runOnQueue(Queues.MAIN)
 
+    AsyncFunction("capture") { viewTag: Int?, promise: Promise ->
+      capture(viewTag, promise)
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("dropCapture") {
+      voidCapture("dropped")
+    }.runOnQueue(Queues.MAIN)
+
     AsyncFunction("cancel") {
       generation++
+      voidCapture("cancel")
       removeOverlay()
     }.runOnQueue(Queues.MAIN)
 
@@ -78,8 +106,13 @@ class ThemeRevealModule : Module() {
       }
     }
 
+    OnActivityEntersBackground {
+      voidCapture("pause")
+    }
+
     OnActivityDestroys {
       generation++
+      voidCapture("destroy")
       removeOverlay()
       WindowSnapshot.kept.hide()
     }
@@ -89,6 +122,7 @@ class ThemeRevealModule : Module() {
       callbacksContext = null
       mainHandler.post {
         generation++
+        voidCapture("destroy")
         removeOverlay()
         WindowSnapshot.kept.hide()
       }
@@ -116,6 +150,64 @@ class ThemeRevealModule : Module() {
     }
   }
 
+  // Takes the snapshot now and keeps it out of the window, so the screen stays live while the finger is down.
+  private fun capture(viewTag: Int?, promise: Promise) {
+    voidCapture("replaced")
+    val ticket = captureTicket
+    val activity = appContext.currentActivity
+    // An overlay on screen would end up in the snapshot, so the switch captures after it instead.
+    if (overlay != null || activity == null || activity.window?.decorView == null || activity.isFinishing ||
+      !Motion.canAnimate(Build.VERSION.SDK_INT, isResumed(activity))
+    ) {
+      promise.resolve(false)
+      return
+    }
+    val root = rootOf(activity, viewTag)
+    val pending = PendingCapture(activity, root)
+    pendingCapture = pending
+    WindowSnapshot.capture(activity, root, mainHandler) { snapshot ->
+      val waiter = pending.waiter
+      if (waiter != null) {
+        promise.resolve(snapshot != null)
+        waiter(snapshot)
+        return@capture
+      }
+      if (pendingCapture === pending) pendingCapture = null
+      if (snapshot == null) {
+        promise.resolve(false)
+        return@capture
+      }
+      if (ticket != captureTicket || activity.isFinishing || activity.isDestroyed || !isResumed(activity) ||
+        !snapshot.host.isAttachedToWindow
+      ) {
+        snapshot.bitmap.recycle()
+        promise.resolve(false)
+        return@capture
+      }
+      // Upload during the press, so the overlay's first frame doesn't have to.
+      snapshot.bitmap.prepareToDraw()
+      held = HeldCapture(ticket, activity, root, snapshot, SystemClock.uptimeMillis())
+      mainHandler.postDelayed(captureExpiry, CaptureRules.TIMEOUT_MS)
+      promise.resolve(true)
+    }
+  }
+
+  // Frees the held capture and voids a running one no prepare took.
+  private fun voidCapture(reason: String) {
+    captureTicket++
+    pendingCapture = null
+    mainHandler.removeCallbacks(captureExpiry)
+    val current = held ?: return
+    held = null
+    current.snapshot.bitmap.recycle()
+    debug("freed the held capture: $reason")
+  }
+
+  private fun rootOf(activity: Activity, viewTag: Int?): View? {
+    val tapped = viewTag?.let { findView(it) }?.takeIf { it.isAttachedToWindow }
+    return tapped?.rootView ?: WindowSnapshot.focusedRoot(activity)
+  }
+
   private fun prepare(viewTag: Int?, promise: Promise) {
     val ticket = ++generation
     removeOverlay()
@@ -125,16 +217,17 @@ class ThemeRevealModule : Module() {
     if (activity == null || window == null || decor == null || activity.isFinishing ||
       !Motion.canAnimate(Build.VERSION.SDK_INT, isResumed(activity))
     ) {
+      voidCapture("no window")
       promise.resolve(false)
       return
     }
     val tapped = viewTag?.let { findView(it) }?.takeIf { it.isAttachedToWindow }
     val root = tapped?.rootView ?: WindowSnapshot.focusedRoot(activity)
     val reactRoot = tapped?.let { WindowSnapshot.reactRootOf(it) } ?: root ?: decor
-    WindowSnapshot.capture(activity, root, mainHandler) { snapshot ->
+    fun attach(snapshot: Snapshot?) {
       if (snapshot == null) {
         promise.resolve(false)
-        return@capture
+        return
       }
       val bitmap = snapshot.bitmap
       if (ticket != generation || activity.isFinishing || activity.isDestroyed || !isResumed(activity) ||
@@ -142,7 +235,7 @@ class ThemeRevealModule : Module() {
       ) {
         WindowSnapshot.kept.give(bitmap)
         promise.resolve(false)
-        return@capture
+        return
       }
       // Kick off the snapshot's GPU upload now, on the RenderThread, so it doesn't land in the overlay's first
       // frame.
@@ -162,6 +255,34 @@ class ThemeRevealModule : Module() {
       // instead of holding them up. The overlay draws in that same frame.
       Choreographer.getInstance().postFrameCallback { promise.resolve(true) }
     }
+    val kept = held
+    if (kept != null && CaptureRules.usable(
+        kept.ticket,
+        captureTicket,
+        kept.activity === activity && kept.root === root,
+        kept.snapshot.bitmap.width,
+        kept.snapshot.bitmap.height,
+        kept.snapshot.cover.width,
+        kept.snapshot.cover.height,
+        kept.takenAtMs,
+        SystemClock.uptimeMillis(),
+      )
+    ) {
+      held = null
+      mainHandler.removeCallbacks(captureExpiry)
+      debug("prepare uses the held capture")
+      attach(kept.snapshot)
+      return
+    }
+    val pending = pendingCapture
+    if (pending != null && pending.activity === activity && pending.root === root) {
+      pendingCapture = null
+      pending.waiter = ::attach
+      debug("prepare waits for the running capture")
+      return
+    }
+    voidCapture("not usable")
+    WindowSnapshot.capture(activity, root, mainHandler, ::attach)
   }
 
   private fun start(transition: TransitionArgs, promise: Promise) {
@@ -223,6 +344,10 @@ class ThemeRevealModule : Module() {
     geometry = null
     (view.parent as? ViewGroup)?.removeView(view)
     view.release(WindowSnapshot.kept::give)
+  }
+
+  private fun debug(message: String) {
+    if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, message)
   }
 
   private fun findView(viewTag: Int): View? = try {
