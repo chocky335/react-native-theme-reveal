@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -156,7 +157,10 @@ class ThemeRevealModule : Module() {
       overlay = view
       geometry = OverlayGeometry(snapshot.cover, rootAt[0], rootAt[1], snapshot.screenX, snapshot.screenY)
       mainHandler.postDelayed(failsafe, FAILSAFE_MS)
-      promise.resolve(true)
+      // JS applies the theme when this resolves, and that render blocks the JS thread. Resolve in the next frame's
+      // callbacks, after React Native's timers for that frame, so the render starts after that frame's JS callbacks
+      // instead of holding them up. The overlay draws in that same frame.
+      Choreographer.getInstance().postFrameCallback { promise.resolve(true) }
     }
   }
 
