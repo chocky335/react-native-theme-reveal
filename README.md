@@ -148,7 +148,7 @@ Create one instance per app, at module scope (outside render).
 | `durations` | `Partial<Record<TransitionType, number>>` | 450 / 450 / 400 / 300 ms | Per transition type, in ms. Anything non-finite, 0 or below, or over 10 000 falls back to the default. |
 | `onError` | `(error: unknown) => void` | `console.warn` | Receives native errors. The theme still applies if the snapshot fails. |
 | `onSettled` | `(info: SettledInfo) => void` | none | Called when a switch finishes, with `{ transition, prepareMs, totalMs }`. |
-| `warmUp` | `boolean` | `true` | Android only: keeps one window-size bitmap around for the next snapshot. See [Warm-up](#warm-up). |
+| `warmUp` | `boolean` | `true` | Prepares the native snapshot path when `useStart` mounts. On Android that means keeping one window-size bitmap. See [Warm-up](#warm-up). |
 
 - `setTheme` has to update what React renders in the same tick. Don't `await` anything before the update and don't
   wrap it in `startTransition`. If the update is deferred, the animation runs over the old theme and the new one
@@ -227,7 +227,7 @@ internally, and it's exported for tests and custom flows.
 
 ### `ThemeRevealModule`
 
-The native module, with `prepare(viewTag?)`, `start(transition)`, `cancel()` and `warmUp(keepBitmap)`.
+The native module, with `prepare(viewTag?)`, `start(transition)`, `cancel()` and `warmUp()`.
 `createThemeReveal` calls it for you, so normally you won't need it.
 
 ### Types
@@ -313,27 +313,29 @@ A switch from inside a React Native `<Modal>` animates too.
 
 ## Warm-up
 
-The first switch in a process used to pay for work that later switches skip. To move that out of the way,
-`useStart()` calls the native `warmUp` once per instance, the first time it mounts. On Android the warm-up runs off
-the main thread and:
-- starts the thread that copies the snapshot,
-- loads the snapshot and animation classes,
-- prepares the argument conversion for `start`. Expo uses Kotlin reflection the first time it converts those
-  arguments, and without the warm-up that blocks the main thread on the first `start`: 85-102 ms on a Mi 11 Lite,
-  18-27 ms on a Pixel 8 Pro.
+The first switch in a process used to pay for work that later switches skip. To move that out of the way, with
+`warmUp: true` (the default) `useStart()` calls the native `warmUp` once per instance, the first time it mounts.
+On Android the warm-up starts the thread that copies the snapshot and allocates one bitmap the size of the window,
+both off the main thread. Then it copies the window into that bitmap once and keeps it. The first copy into a
+fresh bitmap is the slow one, so this way the first switch gets a fast copy.
 
-With `warmUp: true` (the default), Android also keeps one bitmap the size of the window. The warm-up allocates it
-and copies the window into it once, because the first copy into a fresh bitmap is the slow one. After that every
-snapshot copies into the same bitmap and gets it back when the snapshot goes away. Inside a modal, the copy of the
-dialog window still allocates a new bitmap each time.
+After that every snapshot copies into the kept bitmap and gets it back when the snapshot goes away. Inside a modal,
+the copy of the dialog window still allocates a new bitmap each time.
 
-That bitmap is the memory cost: one ARGB bitmap at 4 bytes per pixel, so about 10 MB at 1080x2400, held while the
-app runs. It's freed when the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or above), on
-low memory, when the screen size changes and when the activity is destroyed, and the next switch keeps a new one.
-If you have several instances, the bitmap stays as long as any of them has `warmUp: true`.
+What it costs:
+- Memory: one ARGB bitmap the size of the window, held while the app runs. At 4 bytes per pixel that's about
+  10 MB at 1080x2400. GPU memory didn't grow: on a Pixel 8 Pro, `dumpsys meminfo` showed 100 MB of Graphics with
+  and without the kept bitmap (one switch, then 5 s), so no extra texture of it stays cached. I haven't measured
+  other GPUs.
+- Time: the one copy at mount takes the RenderThread for 16-26 ms on a Mi 11 Lite and 39-60 ms on a Pixel 8 Pro.
+  If your app animates in its first frames, one of them can come late.
 
-With `warmUp: false` you still get the thread, the classes and the conversion, but no bitmap is kept and every
-snapshot allocates its own.
+The bitmap is freed when the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or above), on
+low memory, when the screen size changes and when the activity is destroyed. Nothing is kept while the app is in
+the background, and the next switch keeps a new bitmap.
+
+If you have several instances, the bitmap stays as long as any of them has `warmUp: true`. With `warmUp: false`
+there's no warm-up at all (no thread start, no copy, no kept bitmap) and every snapshot allocates its own bitmap.
 
 On iOS `warmUp` does nothing, since the snapshot there has no thread or bitmap to prepare. If the warm-up fails,
 the error goes to `onError` and switches keep working.
@@ -353,6 +355,9 @@ adb shell am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE <pack
 adb shell am force-stop <package>
 adb shell cmd package compile -f -m speed-profile <package>
 ```
+
+The benchmark in [`benchmark/`](benchmark/) compiles all of the app's code ahead of time for every library, so it
+doesn't show what this profile does for a Play install.
 
 ## Limits
 
@@ -434,8 +439,8 @@ gives a pixel-exact snapshot. On the Mi 11 Lite a system trace shows this readba
 instead. I couldn't get a system trace on the Pixel 8 Pro, so there the same readback cost is the likely cause but
 not a measured one.
 
-On the first switch in a fresh process (no warm-up), ours is slower in seven places. Each value is a median of
-only 3 runs, so these numbers are noisy.
+On the first switch after a cold start (no benchmark warm-up run, and before the package had the `warmUp` option),
+ours is slower in seven places. Each value is a median of only 3 runs, so these numbers are noisy.
 - Pixel 8 Pro, overlay frame: 121.2 ms vs 96.7 ms for `theme-switch-animation` (+25%).
 - Pixel 8 Pro, snapshot JS: 100.5 ms vs 71.7 ms for `theme-switch-animation` (+40%).
 - Pixel 8 Pro, late frames: 1 vs 0 for `theme-switch-animation`.

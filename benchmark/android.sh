@@ -15,8 +15,7 @@
 #   BENCH_PAUSED_FILE  if this file exists, the pass stops before the next run.
 #   BENCH_COLD=1       first switch in a fresh process: no warm-up, the app is force-stopped 1 s before each
 #                      run, and output goes to results/cold/.
-# Before the runs, the pass installs the app's Baseline Profiles and compiles the app with them (speed-profile), like
-# a Play install does. A plain adb install compiles nothing (verify, Android 13) or everything (speed, Android 17).
+# Before the runs, the pass compiles all the app's code ahead of time (speed), same for all three libraries.
 set -u
 if (( $# < 3 )); then
   echo "usage: android.sh <serial> <runs> <lib>..." >&2
@@ -94,19 +93,14 @@ if a shell dumpsys window | grep -qE 'mDreamingLockscreen=true|showing=true'; th
   exit 1
 fi
 
-# The app's Baseline Profiles (all three libraries ship in the same APK): profileinstaller writes them on a broadcast, then the app gets
-# compiled with them (result 2: an earlier pass already wrote them). Needs profileinstaller 1.4.0 or later on Android 15 and later
-# (example/plugins/withProfileInstaller.js).
+# Compile all the app's code ahead of time so every library runs compiled code and no pass depends on the phone's
+# install-time compile (pm.dexopt.install). Our Baseline Profile plays no part here.
 dexopt() { a shell dumpsys package dexopt | grep -A2 "\[$PKG\]" | grep -m1 -oE 'status=[^]]+' }
-a shell am start -W -n $PKG/.MainActivity > /dev/null
-sleep 2
-installed=$(a shell am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE \
-  $PKG/androidx.profileinstaller.ProfileInstallReceiver | grep -oE 'result=[0-9]+')
 a shell am force-stop $PKG
-a shell cmd package compile -f -m speed-profile $PKG > /dev/null
+a shell cmd package compile -f -m speed $PKG > /dev/null
 COMPILED=$(dexopt)
-if [[ $installed != result=[12] || $COMPILED != status=speed-profile ]]; then
-  echo "Baseline Profile not applied on $SERIAL: profileinstaller $installed, $COMPILED" >&2
+if [[ $COMPILED != status=speed ]]; then
+  echo "the app is not compiled with speed on $SERIAL: $COMPILED" >&2
   exit 1
 fi
 
