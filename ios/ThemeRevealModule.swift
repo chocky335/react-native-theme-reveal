@@ -47,7 +47,7 @@ public class ThemeRevealModule: Module {
 
     // No-op on iOS: snapshotView(afterScreenUpdates:) keeps no thread or bitmap a warm-up could start early. It's
     // here so the JS call resolves on both platforms.
-    AsyncFunction("warmUp") { (_: Bool) in }
+    AsyncFunction("warmUp") {}
 
     OnDestroy {
       if Thread.isMainThread {

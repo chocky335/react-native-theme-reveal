@@ -5,7 +5,7 @@ import { createThemeReveal } from '../createThemeReveal'
 describe('jest-expo native module mock', () => {
   it('resolves prepare to false and start, cancel and warmUp to undefined', async () => {
     await expect(ThemeRevealModule.prepare(1)).resolves.toBe(false)
-    await expect(ThemeRevealModule.warmUp(true)).resolves.toBeUndefined()
+    await expect(ThemeRevealModule.warmUp()).resolves.toBeUndefined()
     await expect(ThemeRevealModule.start({ type: 'crossfade', durationMs: 300 })).resolves.toBeUndefined()
     await expect(ThemeRevealModule.cancel()).resolves.toBeUndefined()
   })

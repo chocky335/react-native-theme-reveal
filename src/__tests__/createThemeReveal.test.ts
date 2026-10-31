@@ -404,7 +404,7 @@ describe('useStart', () => {
 })
 
 describe('warm-up', () => {
-  it('warms up native with a kept bitmap when useStart mounts', async () => {
+  it('warms up native when useStart mounts', async () => {
     const { mount } = setup()
 
     expect(warmUp).not.toHaveBeenCalled()
@@ -413,17 +413,17 @@ describe('warm-up', () => {
     await act(async () => {})
 
     expect(warmUp).toHaveBeenCalledTimes(1)
-    expect(warmUp).toHaveBeenCalledWith(true)
   })
 
-  it('warms up without a kept bitmap when the warmUp option is false', async () => {
-    const { mount } = setup({ warmUp: false })
+  it('does not warm up when the warmUp option is false', async () => {
+    const { reveal, getTheme, mount } = setup({ warmUp: false })
 
-    mount()
-    await act(async () => {})
+    mount(StrictMode)
+    await act(() => reveal.switchTo(dark))
 
-    expect(warmUp).toHaveBeenCalledTimes(1)
-    expect(warmUp).toHaveBeenCalledWith(false)
+    expect(warmUp).not.toHaveBeenCalled()
+    expect(getTheme()).toBe(dark)
+    expect(start).toHaveBeenCalledTimes(1)
   })
 
   it('warms up once per instance', async () => {
@@ -439,14 +439,13 @@ describe('warm-up', () => {
     expect(warmUp).toHaveBeenCalledTimes(1)
   })
 
-  it('warms up each instance', async () => {
+  it('warms up each instance that has the option on', async () => {
     setup().mount()
     setup({ warmUp: false }).mount()
+    setup({ warmUp: true }).mount()
     await act(async () => {})
 
     expect(warmUp).toHaveBeenCalledTimes(2)
-    expect(warmUp).toHaveBeenNthCalledWith(1, true)
-    expect(warmUp).toHaveBeenNthCalledWith(2, false)
   })
 
   it('reports a warm-up rejection through onError and still switches', async () => {

@@ -20,7 +20,8 @@ export type ThemeRevealOptions<T> = {
   wipeDirection?: WipeDirection
   onError?: (error: unknown) => void
   onSettled?: (info: SettledInfo) => void
-  // Keep one window-size bitmap for the next snapshot (Android). Default true.
+  // Prepare the native snapshot path when useStart mounts (Android: copy thread, one kept window-size bitmap).
+  // Default true.
   warmUp?: boolean
 }
 
@@ -124,10 +125,10 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
 
   // Once per instance: start the native capture path early so the first switch doesn't pay for it.
   const warmUp = () => {
-    if (warmedUp) return
+    if (warmedUp || options.warmUp === false) return
     warmedUp = true
     try {
-      ThemeRevealModule.warmUp(options.warmUp ?? true).catch(onError)
+      ThemeRevealModule.warmUp().catch(onError)
     } catch (error) {
       onError(error)
     }

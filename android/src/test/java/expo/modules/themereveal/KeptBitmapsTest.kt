@@ -162,6 +162,65 @@ class KeptBitmapsTest {
   }
 
   @Test
+  fun freesWhatComesBackAfterTheAppIsHidden() {
+    val pool = pool().apply { keep = true }
+    pool.take(1080, 2400)
+    pool.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+    val shown = Fake(1080, 2400)
+    val warmUp = Fake(1080, 2400)
+
+    pool.give(shown)
+    assertFalse(pool.hasRoom(1080, 2400))
+    assertFalse(pool.fill(warmUp))
+
+    assertTrue(shown.freed)
+    assertTrue(warmUp.freed)
+    assertEquals(0, pool.size)
+  }
+
+  @Test
+  fun freesWhatComesBackAfterHide() {
+    val pool = pool().apply { keep = true }
+    val kept = Fake(1080, 2400)
+    pool.fill(kept)
+    val shown = pool.take(1080, 2400)!!
+    val other = Fake(1080, 2400)
+    pool.fill(other)
+
+    pool.hide()
+    pool.give(shown)
+
+    assertTrue(other.freed)
+    assertTrue(shown.freed)
+    assertEquals(0, pool.size)
+  }
+
+  @Test
+  fun keepsAgainAfterTheNextCapture() {
+    val pool = pool().apply { keep = true }
+    pool.hide()
+
+    assertNull(pool.take(1080, 2400))
+    val bitmap = Fake(1080, 2400)
+    pool.give(bitmap)
+
+    assertFalse(bitmap.freed)
+    assertEquals(1, pool.size)
+  }
+
+  @Test
+  fun freesOnTheFirstChangeAfterTheSeededSize() {
+    val pool = pool().apply { keep = true }
+    pool.onScreenSize(411, 914)
+    val bitmap = Fake(1080, 2400)
+    pool.fill(bitmap)
+
+    pool.onScreenSize(914, 411)
+
+    assertTrue(bitmap.freed)
+  }
+
+  @Test
   fun freesWhenTheScreenSizeChanges() {
     val pool = pool().apply { keep = true }
     val first = Fake(1080, 2400)

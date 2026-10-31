@@ -16,6 +16,9 @@ internal class KeptBitmaps<B : Any>(
   var keep = false
 
   private val kept = ArrayList<B>(capacity)
+
+  // App is hidden or the activity is gone, so keep nothing until the next capture.
+  private var hidden = false
   private var width = 0
   private var height = 0
   private var screenWidthDp = 0
@@ -25,6 +28,7 @@ internal class KeptBitmaps<B : Any>(
 
   // Kept bitmap of this size, or null. Kept bitmaps of another size get freed, since the window changed size.
   fun take(width: Int, height: Int): B? {
+    hidden = false
     this.width = width
     this.height = height
     val index = kept.indexOfFirst { matches(it) }
@@ -38,7 +42,7 @@ internal class KeptBitmaps<B : Any>(
   // A bitmap whose overlay is gone. Kept if keep is on, it has the size last asked for and there's room.
   fun give(bitmap: B) {
     if (isFreed(bitmap)) return
-    if (keep && kept.size < capacity && matches(bitmap) && kept.none { it === bitmap }) {
+    if (keep && !hidden && kept.size < capacity && matches(bitmap) && kept.none { it === bitmap }) {
       kept.add(bitmap)
     } else {
       free(bitmap)
@@ -48,7 +52,7 @@ internal class KeptBitmaps<B : Any>(
   // Whether a warm-up needs to allocate a bitmap of this size. Kept bitmaps of another size don't count: fill frees
   // them.
   fun hasRoom(width: Int, height: Int): Boolean =
-    keep && kept.count { widthOf(it) == width && heightOf(it) == height } < capacity
+    keep && !hidden && kept.count { widthOf(it) == width && heightOf(it) == height } < capacity
 
   // A warm-up's new bitmap. Returns whether it's kept; if not, it's freed.
   fun fill(bitmap: B): Boolean {
@@ -65,7 +69,13 @@ internal class KeptBitmaps<B : Any>(
   }
 
   fun onTrimMemory(level: Int) {
-    if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) clear()
+    if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) hide()
+  }
+
+  // Frees the kept bitmaps, and the ones that come back until the next capture.
+  fun hide() {
+    hidden = true
+    clear()
   }
 
   fun onScreenSize(widthDp: Int, heightDp: Int) {

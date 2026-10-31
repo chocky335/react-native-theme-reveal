@@ -63,21 +63,24 @@ class ThemeRevealModule : Module() {
       removeOverlay()
     }.runOnQueue(Queues.MAIN)
 
-    // Runs off main.
-    AsyncFunction("warmUp") { keepBitmap: Boolean, promise: Promise ->
-      warmUp(keepBitmap, promise)
+    // Runs off main. JS only calls it when the warmUp option is on.
+    AsyncFunction("warmUp") { promise: Promise ->
+      warmUp(promise)
     }
 
     OnCreate {
       callbacksContext = appContext.reactContext?.applicationContext?.also {
         it.registerComponentCallbacks(memoryCallbacks)
+        // Size to compare the first change against.
+        val config = it.resources.configuration
+        mainHandler.post { WindowSnapshot.kept.onScreenSize(config.screenWidthDp, config.screenHeightDp) }
       }
     }
 
     OnActivityDestroys {
       generation++
       removeOverlay()
-      WindowSnapshot.kept.clear()
+      WindowSnapshot.kept.hide()
     }
 
     OnDestroy {
@@ -86,21 +89,23 @@ class ThemeRevealModule : Module() {
       mainHandler.post {
         generation++
         removeOverlay()
-        WindowSnapshot.kept.clear()
+        WindowSnapshot.kept.hide()
       }
     }
   }
 
-  // Off main: the copy thread and the classes. Then, on main, a kept bitmap of the window's size if keepBitmap.
-  private fun warmUp(keepBitmap: Boolean, promise: Promise) {
+  // Off main: starts the copy thread. Then, on main, keeps a bitmap of the window's size. Failures go to the log
+  // and the promise, and the bitmap part still runs.
+  private fun warmUp(promise: Promise) {
     val error = try {
       WindowSnapshot.warmUp()
       null
-    } catch (thrown: RuntimeException) {
+    } catch (thrown: Exception) {
+      Log.w(TAG, "Cannot start the copy thread", thrown)
       thrown
     }
     mainHandler.post {
-      if (keepBitmap) WindowSnapshot.kept.keep = true
+      WindowSnapshot.kept.keep = true
       WindowSnapshot.keepOne(appContext.currentActivity, mainHandler)
       if (error == null) promise.resolve() else promise.reject("ERR_THEME_REVEAL_WARM_UP", error.message, error)
     }
