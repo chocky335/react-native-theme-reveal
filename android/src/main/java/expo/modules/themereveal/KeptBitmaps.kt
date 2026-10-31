@@ -72,10 +72,15 @@ internal class KeptBitmaps<B : Any>(
     if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) hide()
   }
 
-  // Frees the kept bitmaps, and the ones that come back until the next capture.
+  // Frees the kept bitmaps, and the ones that come back until the next capture or show.
   fun hide() {
     hidden = true
     clear()
+  }
+
+  // App is back in the foreground (a warm-up from a resumed activity), so keep bitmaps again.
+  fun show() {
+    hidden = false
   }
 
   fun onScreenSize(widthDp: Int, heightDp: Int) {

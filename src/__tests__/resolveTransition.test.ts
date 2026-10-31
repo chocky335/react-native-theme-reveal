@@ -146,4 +146,43 @@ describe('resolveTransition', () => {
       durationMs: 0.5,
     })
   })
+
+  // Untyped callers: a null, undefined or non-number inside origin or shape would make native reject start, so it
+  // never leaves JS.
+  it.each([
+    ['undefined y', { x: 10, y: undefined }],
+    ['null x', { x: null, y: 20 }],
+    ['a string', { x: '10', y: 20 }],
+    ['NaN', { x: Number.NaN, y: 20 }],
+    ['Infinity', { x: 10, y: Number.POSITIVE_INFINITY }],
+    ['not an object', 5],
+  ])('treats an origin with %s as no origin', (_, bad) => {
+    const input = { origin: bad as unknown as { x: number; y: number } }
+    expect(resolveTransition(input)).toEqual({ type: 'crossfade', durationMs: 300 })
+    expect(resolveTransition({ ...input, requested: 'reveal', shape })).toEqual({
+      type: 'crossfade',
+      durationMs: 300,
+    })
+  })
+
+  it.each([
+    ['undefined anchor', { ...shape, anchor: undefined }],
+    ['null anchor y', { ...shape, anchor: { x: 0.5, y: null } }],
+    ['undefined inscribedRadius', { ...shape, inscribedRadius: undefined }],
+    ['NaN inscribedRadius', { ...shape, inscribedRadius: Number.NaN }],
+    ['a non-string path', { ...shape, path: 7 }],
+    ['no fields', {}],
+  ])('uses the circle for a shape with %s', (_, bad) => {
+    const badShape = bad as unknown as Shape
+    expect(resolveTransition({ requested: 'reveal', origin, shape: badShape })).toEqual({
+      type: 'reveal',
+      origin,
+      durationMs: 450,
+    })
+    expect(resolveTransition({ requested: 'inverseReveal', origin, shape, requestedShape: badShape })).toEqual({
+      type: 'inverseReveal',
+      origin,
+      durationMs: 450,
+    })
+  })
 })

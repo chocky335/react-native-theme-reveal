@@ -32,7 +32,8 @@ class TransitionArgsTest {
     assertEquals(PointArgs(1.0, 2.0), args.origin)
   }
 
-  // Defaults the Expo Records had, so each missing field takes the same path in start as before.
+  // Defaults the Expo Records had, so each missing field takes the same path in start as before. Means an absent
+  // key, not one set to null or undefined inside origin or shape: Expo rejects those before the parser runs.
   @Test
   fun givesTheOldDefaultsForMissingFields() {
     val args = TransitionArgs.from(emptyMap<String, Any?>())

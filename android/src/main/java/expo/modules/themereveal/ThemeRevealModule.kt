@@ -95,7 +95,7 @@ class ThemeRevealModule : Module() {
   }
 
   // Off main: starts the copy thread. Then, on main, keeps a bitmap of the window's size. Failures go to the log
-  // and the promise, and the bitmap part still runs.
+  // and the promise.
   private fun warmUp(promise: Promise) {
     val error = try {
       WindowSnapshot.warmUp()
@@ -106,7 +106,11 @@ class ThemeRevealModule : Module() {
     }
     mainHandler.post {
       WindowSnapshot.kept.keep = true
-      WindowSnapshot.keepOne(appContext.currentActivity, mainHandler)
+      val activity = appContext.currentActivity
+      // A JS reload hid the pool in the old module's OnDestroy. This warm-up comes from a mounted UI.
+      if (activity != null && isResumed(activity)) WindowSnapshot.kept.show()
+      // Copy thread didn't start, so keepOne would fail the same way.
+      if (error == null) WindowSnapshot.keepOne(activity, mainHandler)
       if (error == null) promise.resolve() else promise.reject("ERR_THEME_REVEAL_WARM_UP", error.message, error)
     }
   }

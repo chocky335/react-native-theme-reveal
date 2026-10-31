@@ -3,6 +3,8 @@ package expo.modules.themereveal
 // The start argument, read from the JS object by hand. Expo would convert a Record with Kotlin reflection, and its
 // first conversion blocked the main thread on the first start (85-102 ms on a Mi 11 Lite, 18-27 ms on a Pixel 8
 // Pro). A missing, null or wrong-typed field gets the default the Records had, so start takes the same path for it.
+// A null or undefined inside origin or shape never gets here, because Expo's conversion of the nested object
+// rejects start before this runs. resolveTransition in JS keeps such values out of start.
 internal data class PointArgs(val x: Double, val y: Double) {
   companion object {
     fun from(value: Any?): PointArgs? {

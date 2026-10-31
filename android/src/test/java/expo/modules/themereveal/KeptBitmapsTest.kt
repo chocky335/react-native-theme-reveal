@@ -208,6 +208,21 @@ class KeptBitmapsTest {
     assertEquals(1, pool.size)
   }
 
+  // A JS reload hides the pool (OnDestroy), and the next warm-up shows it again.
+  @Test
+  fun keepsAgainAfterShow() {
+    val pool = pool().apply { keep = true }
+    pool.hide()
+    assertFalse(pool.hasRoom(1080, 2400))
+
+    pool.show()
+    val bitmap = Fake(1080, 2400)
+
+    assertTrue(pool.hasRoom(1080, 2400))
+    assertTrue(pool.fill(bitmap))
+    assertFalse(bitmap.freed)
+  }
+
   @Test
   fun freesOnTheFirstChangeAfterTheSeededSize() {
     val pool = pool().apply { keep = true }
