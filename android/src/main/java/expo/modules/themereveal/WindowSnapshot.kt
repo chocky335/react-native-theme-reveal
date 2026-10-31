@@ -1,7 +1,5 @@
 package expo.modules.themereveal
 
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -16,8 +14,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
-import android.view.animation.LinearInterpolator
-import android.widget.FrameLayout
 import com.facebook.react.uimanager.RootView
 import com.facebook.react.views.modal.ReactModalHostView
 
@@ -171,24 +167,9 @@ internal object WindowSnapshot {
     }
   }
 
-  // Off main. Starts the copy thread and loads the classes the first switch needs, so it pays for neither.
+  // Off main. Starts the copy thread so the first switch doesn't have to.
   fun warmUp() {
     copyHandler
-    // Class literals load the classes without running any of their code.
-    listOf(
-      RevealOverlayView::class.java,
-      WipeDirection::class.java,
-      Snapshot::class.java,
-      Frame::class.java,
-      PixelCopy::class.java,
-      PixelCopy.OnPixelCopyFinishedListener::class.java,
-      ValueAnimator::class.java,
-      AnimatorListenerAdapter::class.java,
-      LinearInterpolator::class.java,
-      FrameLayout.LayoutParams::class.java,
-    )
-    Motion.easeInOut(Motion.growth(0.5, 0.1, 1.0).toFloat())
-    ShapePath.circle()
   }
 
   // Main thread. If kept has room, allocates a bitmap of the activity window's size on the copy thread, copies the

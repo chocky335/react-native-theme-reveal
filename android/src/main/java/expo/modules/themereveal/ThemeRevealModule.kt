@@ -20,35 +20,6 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import expo.modules.kotlin.records.Field
-import expo.modules.kotlin.records.Record
-import expo.modules.kotlin.types.convert
-
-internal class PointRecord : Record {
-  @Field val x: Double = 0.0
-
-  @Field val y: Double = 0.0
-}
-
-internal class ShapeRecord : Record {
-  @Field val path: String = ""
-
-  @Field val anchor: PointRecord = PointRecord()
-
-  @Field val inscribedRadius: Double = 0.0
-}
-
-internal class TransitionRecord : Record {
-  @Field val type: String = ""
-
-  @Field val durationMs: Double = 0.0
-
-  @Field val origin: PointRecord? = null
-
-  @Field val shape: ShapeRecord? = null
-
-  @Field val direction: String? = null
-}
 
 // Overlay has to stay the size of cover. The React root the origin comes from sits at (rootX, rootY) on screen, the
 // overlay at (screenX, screenY).
@@ -83,8 +54,8 @@ class ThemeRevealModule : Module() {
       prepare(viewTag, promise)
     }.runOnQueue(Queues.MAIN)
 
-    AsyncFunction("start") { transition: TransitionRecord, promise: Promise ->
-      start(transition, promise)
+    AsyncFunction("start") { transition: Map<String, Any?>, promise: Promise ->
+      start(TransitionArgs.from(transition), promise)
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("cancel") {
@@ -120,13 +91,10 @@ class ThemeRevealModule : Module() {
     }
   }
 
-  // Off main: the copy thread, the classes and the transition's argument conversion. Expo converts a Record with
-  // Kotlin reflection, and the first conversion blocked the main thread on the first start: 85-102 ms on a Mi 11
-  // Lite, 18-27 ms on a Pixel 8 Pro. Then, on main, a kept bitmap of the window's size if keepBitmap.
+  // Off main: the copy thread and the classes. Then, on main, a kept bitmap of the window's size if keepBitmap.
   private fun warmUp(keepBitmap: Boolean, promise: Promise) {
     val error = try {
       WindowSnapshot.warmUp()
-      convert<TransitionRecord>(SAMPLE_TRANSITION)
       null
     } catch (thrown: RuntimeException) {
       thrown
@@ -183,7 +151,7 @@ class ThemeRevealModule : Module() {
     }
   }
 
-  private fun start(transition: TransitionRecord, promise: Promise) {
+  private fun start(transition: TransitionArgs, promise: Promise) {
     val view = overlay
     if (view == null) {
       promise.resolve()
@@ -210,7 +178,7 @@ class ThemeRevealModule : Module() {
     if (!playing) removeOverlay()
   }
 
-  private fun play(view: RevealOverlayView, transition: TransitionRecord, durationMs: Long, onEnd: () -> Unit): Boolean {
+  private fun play(view: RevealOverlayView, transition: TransitionArgs, durationMs: Long, onEnd: () -> Unit): Boolean {
     when (transition.type) {
       "reveal", "inverseReveal" -> {
         val origin = transition.origin ?: return false
@@ -256,7 +224,7 @@ class ThemeRevealModule : Module() {
   private fun animatorsEnabled(): Boolean =
     Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled()
 
-  private fun shapeOf(record: ShapeRecord?): ShapePath {
+  private fun shapeOf(record: ShapeArgs?): ShapePath {
     if (record == null) return ShapePath.circle()
     return try {
       ShapePath.parse(
@@ -279,14 +247,6 @@ class ThemeRevealModule : Module() {
   }
 
   private companion object {
-    // Every field set, so the warm-up conversion hits every record type.
-    val SAMPLE_TRANSITION = mapOf(
-      "type" to "reveal",
-      "durationMs" to 0.0,
-      "origin" to mapOf("x" to 0.0, "y" to 0.0),
-      "shape" to mapOf("path" to "", "anchor" to mapOf("x" to 0.0, "y" to 0.0), "inscribedRadius" to 0.0),
-      "direction" to "up",
-    )
     const val FAILSAFE_MS = 1000L
     const val TAG = "ThemeReveal"
   }
