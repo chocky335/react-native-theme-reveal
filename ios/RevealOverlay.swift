@@ -6,15 +6,26 @@ final class RevealOverlay {
   let size: CGSize
   private var playing = 0
 
-  init?(window: UIWindow) {
+  convenience init?(window: UIWindow) {
+    guard let snapshot = Self.snapshot(of: window) else { return nil }
+    self.init(snapshot: snapshot, window: window)
+  }
+
+  // Puts a snapshot from snapshot(of:) on top of the window.
+  init(snapshot: UIView, window: UIWindow) {
+    window.addSubview(snapshot)
+    view = snapshot
+    size = snapshot.frame.size
+  }
+
+  // Window's content right now, as a view that isn't in the window yet.
+  static func snapshot(of window: UIWindow) -> UIView? {
     guard let snapshot = window.snapshotView(afterScreenUpdates: false) else { return nil }
     snapshot.frame = window.bounds
     snapshot.isUserInteractionEnabled = false
     snapshot.isAccessibilityElement = false
     snapshot.accessibilityElementsHidden = true
-    window.addSubview(snapshot)
-    view = snapshot
-    size = window.bounds.size
+    return snapshot
   }
 
   func reveal(_ shape: RevealShape, origin: CGPoint, inverse: Bool, duration: Double, onEnd: @escaping () -> Void) {

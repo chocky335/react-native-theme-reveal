@@ -105,6 +105,51 @@ export default function App() {
 
 The example app in `example/` has every transition, a modal, the keyboard case and the benchmark screen.
 
+## Snapshot on press-in
+
+By default `switchTo` takes the snapshot when the press ends. With `reveal.pressCapture` the package takes it when
+the press starts instead, so the snapshot is ready by the release and the animation starts sooner. Spread it on the
+`Pressable` whose `onPress` calls `switchTo`:
+
+```tsx
+<Pressable ref={buttonRef} {...reveal.pressCapture} onPress={onPress}>
+```
+
+- `onPressIn` takes the snapshot and keeps it off screen, so the screen stays live while the finger is down.
+- `onPress` calls `switchTo`, which puts the held snapshot on screen right away.
+- A press that ends without `onPress` (the finger slid off the button, or a scroll took over) only gets
+  `onPressOut`, which frees the snapshot. It does that in a later macrotask, because React Native calls
+  `onPressOut` before `onPress` on release.
+- In `onPress`, call `switchTo` before any `await` that waits on native work. Otherwise the deferred `onPressOut`
+  can free the snapshot first, and the switch takes a new one at release as if you weren't using `pressCapture`.
+  `await originFromPress(event)` is fine when the event has a touch point.
+- The press-in point becomes the origin for the next switch, like `setOrigin`. A later `setOrigin` call wins.
+
+The catch is that the snapshot shows the screen at press-in, not at release. In pixels, that means:
+- The pressed button looks pressed in the snapshot (a pressed opacity or a ripple, say), and the old screen keeps
+  that look until the animation uncovers it.
+- Anything that moved during the press (a clock, a running animation, a progress bar) shows as it was at press-in.
+  The snapshot is one press old.
+
+If you need the exact release frame, skip `pressCapture`.
+
+The switch falls back to a new snapshot at release when:
+- no switch used the held snapshot within 3 s. The package frees it then, so a long press doesn't hold on to a
+  full-window bitmap (about 10 MB at 1080 x 2400 on Android). The press-in point stays the origin.
+- the window changed size, or the switch comes from another window (on Android, another modal).
+- the app went to the background, `switchTo` got the current theme, or a newer press-in replaced the snapshot.
+- a switch animation was on screen at press-in. The package takes no snapshot then, since it would capture that
+  animation's current frame.
+
+On Android, if the release comes before the press-in snapshot is ready, the switch waits for it and shows it. It
+doesn't take a second one.
+
+iOS has the same API. There the package takes the key window's `snapshotView(afterScreenUpdates: false)` at
+press-in and adds it to the window at release. That snapshot is cheap on iOS anyway, so the gain is small. iOS
+ignores the view tag for the press-in snapshot, because it always snapshots the key window. Modals open in that
+same window, so a modal that opens during the press doesn't throw the snapshot away, and the switch shows the
+screen from before the modal opened.
+
 ## Transitions
 
 | | |
@@ -184,11 +229,31 @@ Switches to `theme` with an animation.
 
 - The most specific choice wins: the `switchTo` option, then the factory option, then the default.
 - `reveal` and `inverseReveal` need an origin, and fall back to `crossfade` without one.
-- If `theme` is already current, `switchTo` removes any snapshot that's on screen and returns.
+- If `theme` is already current, `switchTo` removes any snapshot that's on screen, frees a press-in snapshot and
+  returns.
 - The newest `switchTo` call wins. An older call still waiting for its snapshot does nothing.
 - If the snapshot fails, `setTheme` still runs without animation, so the theme always applies.
 - The promise resolves once the theme is set, before the animation ends. Use `onSettled` if you need the end.
 - It only rejects if `getTheme` or `setTheme` throws.
+
+### `reveal.pressCapture`
+
+`{ onPressIn(event), onPressOut() }` for a `Pressable`. See [Snapshot on press-in](#snapshot-on-press-in).
+- `onPressIn` calls `capture` with the touch point (`pageX`, `pageY`) and `event.nativeEvent.target`. If the event
+  has no finite touch point, it does nothing and the switch takes its snapshot at release.
+- `onPressOut` frees the press-in snapshot in a later macrotask, if no `switchTo` has used it by then.
+
+### `reveal.capture(point, viewTag?)`
+
+Takes the snapshot now and keeps it off screen for the next `switchTo`. It also sets `point` and `viewTag` as the
+origin for the next switch, like `setOrigin`.
+- A second `capture` replaces the first.
+- If no switch uses the snapshot within 3 s, the package frees it.
+- If the native capture fails, the error goes to `onError` and the next switch takes its snapshot as usual.
+
+### `reveal.dropCapture()`
+
+Frees the press-in snapshot. It also clears the origin that `capture` set, unless `setOrigin` set a newer one.
 
 ### `reveal.useStart()`
 
@@ -227,8 +292,8 @@ internally, and it's exported for tests and custom flows.
 
 ### `ThemeRevealModule`
 
-The native module, with `prepare(viewTag?)`, `start(transition)`, `cancel()` and `warmUp()`.
-`createThemeReveal` calls it for you, so normally you won't need it.
+The native module, with `prepare(viewTag?)`, `start(transition)`, `cancel()`, `warmUp()`, `capture(viewTag?)` and
+`dropCapture()`. `createThemeReveal` calls it for you, so normally you won't need it.
 
 ### Types
 
@@ -245,6 +310,7 @@ type TransitionType = Transition['type']
 type SettledInfo = { transition: TransitionType | null; prepareMs: number; totalMs: number }
 type SwitchOptions = { transition?: TransitionType; shape?: Shape; wipeDirection?: WipeDirection }
 type PressOrigin = { point: Point; viewTag?: number }
+type PressCapture = { onPressIn(event: GestureResponderEvent): void; onPressOut(): void }
 type MeasurableView = {
   measureInWindow(callback: (x: number, y: number, width: number, height: number) => void): void
 }
@@ -310,6 +376,7 @@ A switch from inside a React Native `<Modal>` animates too.
 - The app has to be in the foreground. If it's paused or in the background, a switch applies the theme without
   animating.
 - If a snapshot never gets its animation start, it's removed after 1 s, so it can't get stuck on screen.
+- A press-in snapshot is freed when the app goes to the background.
 
 ## Warm-up
 

@@ -98,6 +98,15 @@ enum Motion {
     snapshot.width == window.width && snapshot.height == window.height
   }
 
+  // A press-in capture no switch uses is dropped after this long. Same as Android.
+  static let captureTimeoutSeconds = 3.0
+
+  // A held capture can stand in for prepare's own snapshot if it shows the same window, that
+  // window still has its size, and it's no older than the timeout.
+  static func canUseCapture(sameWindow: Bool, captured: CGSize, current: CGSize, ageSeconds: Double) -> Bool {
+    sameWindow && sameSize(captured, current) && ageSeconds >= 0 && ageSeconds < captureTimeoutSeconds
+  }
+
   static func effectiveInscribedRadius(bounds: CGRect, anchor: CGPoint, inscribedRadius: CGFloat) -> CGFloat {
     let anchorInside = anchor.x >= bounds.minX && anchor.x <= bounds.maxX
       && anchor.y >= bounds.minY && anchor.y <= bounds.maxY

@@ -20,8 +20,17 @@ struct TransitionRecord: Record {
   @Field var direction: String?
 }
 
+// Snapshot from capture(), kept out of the window until prepare() shows it.
+private struct HeldCapture {
+  let view: UIView
+  weak var window: UIWindow?
+  let takenAt: CFTimeInterval
+}
+
 public class ThemeRevealModule: Module {
   private var overlay: RevealOverlay?
+  private var held: HeldCapture?
+  private var captureExpiry: DispatchWorkItem?
   // Offset, in the overlay, of the React root a tapped view's origin is measured in (pageX /
   // pageY). Read at snapshot time like on Android, so a modal that moves or closes before start
   // doesn't shift the origin.
@@ -41,7 +50,17 @@ public class ThemeRevealModule: Module {
       self.start(transition, promise)
     }.runOnQueue(.main)
 
+    // prepare only snapshots the key window, so the view tag isn't needed here.
+    AsyncFunction("capture") { (_: Int?) -> Bool in
+      self.capture()
+    }.runOnQueue(.main)
+
+    AsyncFunction("dropCapture") {
+      self.dropCapture()
+    }.runOnQueue(.main)
+
     AsyncFunction("cancel") {
+      self.dropCapture()
       self.removeOverlay()
     }.runOnQueue(.main)
 
@@ -49,21 +68,59 @@ public class ThemeRevealModule: Module {
     // here so the JS call resolves on both platforms.
     AsyncFunction("warmUp") {}
 
+    OnAppEntersBackground {
+      Self.onMain { self.dropCapture() }
+    }
+
     OnDestroy {
-      if Thread.isMainThread {
+      Self.onMain {
+        self.dropCapture()
         self.removeOverlay()
-      } else {
-        DispatchQueue.main.async { self.removeOverlay() }
       }
     }
   }
 
+  private static func onMain(_ body: @escaping () -> Void) {
+    if Thread.isMainThread {
+      body()
+    } else {
+      DispatchQueue.main.async(execute: body)
+    }
+  }
+
+  // Takes the snapshot now and keeps it out of the window, so the screen stays live while
+  // the finger is down.
+  private func capture() -> Bool {
+    dropCapture()
+    let active = UIApplication.shared.applicationState == .active
+    // An overlay on screen would end up in the snapshot, so the switch snapshots after it instead.
+    guard overlay == nil,
+          Motion.canAnimate(active: active, reduceMotion: UIAccessibility.isReduceMotionEnabled),
+          let window = Self.keyWindow(),
+          let view = RevealOverlay.snapshot(of: window) else {
+      return false
+    }
+    held = HeldCapture(view: view, window: window, takenAt: CACurrentMediaTime())
+    let item = DispatchWorkItem { [weak self] in self?.dropCapture() }
+    captureExpiry = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + Motion.captureTimeoutSeconds, execute: item)
+    return true
+  }
+
+  private func dropCapture() {
+    captureExpiry?.cancel()
+    captureExpiry = nil
+    held = nil
+  }
+
   private func prepare(_ viewTag: Int?) -> Bool {
     removeOverlay()
+    let kept = held
+    dropCapture()
     let active = UIApplication.shared.applicationState == .active
     guard Motion.canAnimate(active: active, reduceMotion: UIAccessibility.isReduceMotionEnabled),
           let window = Self.keyWindow(),
-          let next = RevealOverlay(window: window) else {
+          let next = Self.overlay(on: window, kept: kept) else {
       return false
     }
     overlay = next
@@ -138,6 +195,17 @@ public class ThemeRevealModule: Module {
       return CGPoint(x: point.x + offset.x, y: point.y + offset.y)
     }
     return current.view.convert(point, from: nil)
+  }
+
+  // The held capture if it still shows this window at its size, otherwise a snapshot taken
+  // now.
+  private static func overlay(on window: UIWindow, kept: HeldCapture?) -> RevealOverlay? {
+    if let kept, Motion.canUseCapture(
+      sameWindow: kept.window === window, captured: kept.view.frame.size, current: window.bounds.size,
+      ageSeconds: CACurrentMediaTime() - kept.takenAt) {
+      return RevealOverlay(snapshot: kept.view, window: window)
+    }
+    return RevealOverlay(window: window)
   }
 
   private func findView(_ viewTag: Int) -> UIView? {

@@ -88,6 +88,22 @@ enum MotionTests {
     check(!Motion.sameSize(CGSize(width: 390, height: 844), CGSize(width: 844, height: 390)), "sameSize: rotated")
     check(!Motion.sameSize(CGSize(width: 390, height: 844), CGSize(width: 390, height: 800)), "sameSize: shorter")
 
+    // canUseCapture: same window, same size, younger than the 3 s capture timeout.
+    let phone = CGSize(width: 390, height: 844)
+    check(Motion.captureTimeoutSeconds == 3, "the capture timeout is 3 s")
+    check(Motion.canUseCapture(sameWindow: true, captured: phone, current: phone, ageSeconds: 0.1),
+          "canUseCapture: a fresh capture of the same window")
+    check(!Motion.canUseCapture(sameWindow: false, captured: phone, current: phone, ageSeconds: 0.1),
+          "canUseCapture: another window")
+    check(!Motion.canUseCapture(sameWindow: true, captured: phone, current: CGSize(width: 844, height: 390),
+                                ageSeconds: 0.1), "canUseCapture: another size")
+    check(Motion.canUseCapture(sameWindow: true, captured: phone, current: phone, ageSeconds: 2.999),
+          "canUseCapture: just before the timeout")
+    check(!Motion.canUseCapture(sameWindow: true, captured: phone, current: phone, ageSeconds: 3),
+          "canUseCapture: at the timeout")
+    check(!Motion.canUseCapture(sameWindow: true, captured: phone, current: phone, ageSeconds: -0.1),
+          "canUseCapture: a capture from the future")
+
     // durationSeconds: a finite duration above 0 and up to 10 000 ms, in seconds (the same cap as Android).
     check(Motion.durationSeconds(ms: 450) == 0.45, "durationSeconds converts ms to seconds")
     check(Motion.durationSeconds(ms: 10_000) == 10, "durationSeconds keeps the 10 000 ms cap")
