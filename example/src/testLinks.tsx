@@ -1,6 +1,7 @@
 // Device-check hooks, not part of the demo. Scripts drive the example through these links, no taps needed:
 //   themereveal-example://switch?transition=reveal&shape=star&direction=left&x=40&y=150   (x, y: window points)
 //   themereveal-example://switch?transition=reveal&x=40&y=150&hold=300   (capture now, switch 300 ms later)
+//   ...&hold=300&race=1   (switch with no origin first, capture while that switch takes its snapshot, switch again)
 //   themereveal-example://modal?presentation=pageSheet&measure=page|window&transition=reveal
 //   themereveal-example://keyboard?transition=reveal&x=40&y=150
 // iOS: `simctl launch <device> <app> -switchLinks '<link> <link>'` runs the links 1.5 s apart, with no "Open in"
@@ -18,7 +19,7 @@ import { opposite } from './theme'
 import type { Theme } from './theme'
 
 type Link =
-  | { kind: 'switch' | 'keyboard'; options: SwitchOptions; point?: Point; holdMs?: number }
+  | { kind: 'switch' | 'keyboard'; options: SwitchOptions; point?: Point; holdMs?: number; race?: boolean }
   | { kind: 'modal'; options: SwitchOptions; presentation: ModalPresentation; measure: 'page' | 'window' }
 
 const TRANSITIONS: TransitionType[] = ['reveal', 'inverseReveal', 'wipe', 'crossfade']
@@ -52,13 +53,14 @@ function parseLink(url: string): Link | null {
   const hold = Number(params.get('hold'))
   const holdMs = point && params.has('hold') && hold >= 0 ? hold : undefined
   if (base.endsWith('://keyboard')) return { kind: 'keyboard', options, point }
-  if (base.endsWith('://switch')) return { kind: 'switch', options, point, holdMs }
+  if (base.endsWith('://switch'))
+    return { kind: 'switch', options, point, holdMs, race: params.get('race') === '1' }
   return null
 }
 
 type TestLinks = {
   pending: Link | null
-  run: (options: SwitchOptions, point?: Point, viewTag?: number, holdMs?: number) => void
+  run: (options: SwitchOptions, point?: Point, viewTag?: number, holdMs?: number, race?: boolean) => void
   clear: () => void
 }
 
@@ -75,9 +77,10 @@ export function TestLinksProvider({
 }) {
   const [pending, setPending] = useState<Link | null>(null)
   const clear = useCallback(() => setPending(null), [])
-  const run = (options: SwitchOptions, point?: Point, viewTag?: number, holdMs?: number) => {
+  const run = (options: SwitchOptions, point?: Point, viewTag?: number, holdMs?: number, race?: boolean) => {
     // Press-in capture without a press: capture now, switch holdMs later.
     if (point && holdMs !== undefined) {
+      if (race) void reveal.switchTo(opposite(getTheme()), options)
       reveal.capture(point, viewTag)
       setTimeout(() => run(options, point, viewTag), holdMs)
       return
@@ -93,7 +96,7 @@ export function TestLinksProvider({
   useEffect(() => {
     const handle = (url: string | null) => {
       const link = url ? parseLink(url) : null
-      if (link?.kind === 'switch') runRef.current(link.options, link.point, undefined, link.holdMs)
+      if (link?.kind === 'switch') runRef.current(link.options, link.point, undefined, link.holdMs, link.race)
       else if (link) setPending(link)
     }
     void Linking.getInitialURL().then(handle)

@@ -20,9 +20,11 @@ type Props = {
   followSystem: Toggle
   measureOnly: Toggle
   switchOnBackground: Toggle
+  pressIn: Toggle
   onSwitch: (button: SwitchButton, event: GestureResponderEvent, view: View | null) => void
-  // Takes the snapshot on press-in, and onSwitch switches on release.
-  pressCapture: PressCapture
+  // Takes the snapshot on press-in, and onSwitch switches on release. Undefined means the snapshot is taken on
+  // release.
+  pressCapture?: PressCapture
   onOpenBenchmark: () => void
 }
 
@@ -33,6 +35,7 @@ export function HomeScreen({
   followSystem,
   measureOnly,
   switchOnBackground,
+  pressIn,
   onSwitch,
   pressCapture,
   onOpenBenchmark,
@@ -77,8 +80,9 @@ export function HomeScreen({
           label={button.label}
           colors={colors}
           onPress={(event, view) => onSwitch(button, event, view)}
-          onPressIn={pressCapture.onPressIn}
-          onPressOut={pressCapture.onPressOut}
+          onPressIn={pressCapture?.onPressIn}
+          onPressOut={pressCapture?.onPressOut}
+          pressedLook={button.pressedLook}
         />
       ))}
 
@@ -93,6 +97,7 @@ export function HomeScreen({
       {toggleRow('Follow system', followSystem)}
       {toggleRow('Origin from measureInWindow', measureOnly)}
       {toggleRow('Switch when the app goes to background', switchOnBackground)}
+      {toggleRow('Snapshot on press-in', pressIn)}
 
       <View style={styles.chips}>
         {MODAL_PRESENTATIONS.map((option) => (

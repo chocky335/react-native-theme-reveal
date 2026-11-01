@@ -22,7 +22,7 @@ type Props = {
   colors: Colors
   topInset: number
   onSwitch: (button: SwitchButton, event: GestureResponderEvent, view: View | null) => void
-  pressCapture: PressCapture
+  pressCapture?: PressCapture
   onClose: () => void
 }
 
@@ -58,8 +58,8 @@ export function ModalScreen({
               label={button.label}
               colors={colors}
               onPress={(event, view) => onPress(button, event, view)}
-              onPressIn={pressCapture.onPressIn}
-              onPressOut={pressCapture.onPressOut}
+              onPressIn={pressCapture?.onPressIn}
+              onPressOut={pressCapture?.onPressOut}
             />
           </View>
         ))}

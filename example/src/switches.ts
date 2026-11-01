@@ -6,7 +6,7 @@ import { STAR } from './StarShape'
 import { opposite } from './theme'
 import type { Theme } from './theme'
 
-export type SwitchButton = { label: string; options: SwitchOptions; inModal?: boolean }
+export type SwitchButton = { label: string; options: SwitchOptions; inModal?: boolean; pressedLook?: boolean }
 
 export const SWITCH_BUTTONS: SwitchButton[] = [
   { label: 'Reveal circle', options: { transition: 'reveal' }, inModal: true },
@@ -18,6 +18,7 @@ export const SWITCH_BUTTONS: SwitchButton[] = [
   { label: 'Wipe left', options: { transition: 'wipe', wipeDirection: 'left' } },
   { label: 'Wipe right', options: { transition: 'wipe', wipeDirection: 'right' } },
   { label: 'Crossfade', options: { transition: 'crossfade' }, inModal: true },
+  { label: 'Reveal circle, pressed look', options: { transition: 'reveal' }, pressedLook: true },
 ]
 
 // Press event with no pageX/pageY, so originFromPress measures the view instead.

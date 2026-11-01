@@ -32,6 +32,7 @@ export default function App() {
   const [followSystem, setFollowSystem] = useState(false)
   const [measureOnly, setMeasureOnly] = useState(false)
   const [switchOnBackground, setSwitchOnBackground] = useState(false)
+  const [pressIn, setPressIn] = useState(true)
   // New key on every open so each benchmark link starts from the same fresh screen.
   const [benchmark, setBenchmark] = useState<{ library: LibraryId; autoRun: boolean; key: number } | null>(
     null,
@@ -78,10 +79,13 @@ export default function App() {
           followSystem={{ value: followSystem, set: setFollowSystem }}
           measureOnly={{ value: measureOnly, set: setMeasureOnly }}
           switchOnBackground={{ value: switchOnBackground, set: setSwitchOnBackground }}
+          pressIn={{ value: pressIn, set: setPressIn }}
           onSwitch={(button, event, view) =>
             void switchFromPress(reveal, getTheme, button, event, view, measureOnly)
           }
-          pressCapture={reveal.pressCapture}
+          // measureInWindow is a native round trip before switchTo, so the press-out drop would free the snapshot
+          // first.
+          pressCapture={pressIn && !measureOnly ? reveal.pressCapture : undefined}
           onOpenBenchmark={() => openBenchmark('ours')}
         />
       )}
