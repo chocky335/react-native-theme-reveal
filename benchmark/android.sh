@@ -15,6 +15,8 @@
 #   BENCH_PAUSED_FILE  if this file exists, the pass stops before the next run.
 #   BENCH_COLD=1       first switch in a fresh process: no warm-up, the app is force-stopped 1 s before each
 #                      run, and output goes to results/cold/.
+#   BENCH_HOLD_MS=<ms> hold the press this long (`input swipe x y x y <ms>`) instead of `input tap`. Output goes to
+#                      results/hold/, or results/cold-hold/ with BENCH_COLD=1.
 # Before the runs, the pass compiles all the app's code ahead of time (speed), same for all three libraries.
 set -u
 if (( $# < 3 )); then
@@ -24,6 +26,10 @@ fi
 SERIAL=$1 RUNS=$2
 shift 2
 LIBS=("$@")
+if [[ -n ${BENCH_HOLD_MS:-} && ! $BENCH_HOLD_MS =~ ^[1-9][0-9]*$ ]]; then
+  echo "BENCH_HOLD_MS must be a whole number of ms above 0: $BENCH_HOLD_MS" >&2
+  exit 2
+fi
 HERE=${0:A:h}
 PKG=expo.modules.themereveal.example
 
@@ -78,7 +84,11 @@ one_run() {
   a logcat -c
   a shell dumpsys gfxinfo $PKG reset > /dev/null
   focus || { echo "focus is not $PKG:" >&2; a shell dumpsys window | grep -m1 mCurrentFocus >&2; exit 1; }
-  a shell input tap $x $y
+  if [[ -n ${BENCH_HOLD_MS:-} ]]; then
+    a shell input swipe $x $y $x $y $BENCH_HOLD_MS
+  else
+    a shell input tap $x $y
+  fi
   BENCH=$(wait_log "BENCH lib=$lib " 15)
   # Let the transition's last frames finish drawing.
   sleep 0.5
@@ -117,10 +127,18 @@ for name in animator_duration_scale transition_animation_scale window_animation_
   fi
 done
 RESULTS=$HERE/results
-[[ -n ${BENCH_COLD:-} ]] && RESULTS=$RESULTS/cold
+if [[ -n ${BENCH_COLD:-} && -n ${BENCH_HOLD_MS:-} ]]; then
+  RESULTS=$RESULTS/cold-hold
+elif [[ -n ${BENCH_COLD:-} ]]; then
+  RESULTS=$RESULTS/cold
+elif [[ -n ${BENCH_HOLD_MS:-} ]]; then
+  RESULTS=$RESULTS/hold
+fi
 mkdir -p $RESULTS/raw
 WARMUP=$(mktemp -d)
-echo "device $DEVICE, scales ${(j:,:)SCALES}, $COMPILED, $RUNS rounds of ${LIBS[*]}"
+TAP="input tap"
+[[ -n ${BENCH_HOLD_MS:-} ]] && TAP="$BENCH_HOLD_MS ms hold"
+echo "device $DEVICE, scales ${(j:,:)SCALES}, $COMPILED, $TAP, $RUNS rounds of ${LIBS[*]}"
 
 if [[ -z ${BENCH_COLD:-} ]]; then
   for lib in $LIBS; do

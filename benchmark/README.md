@@ -5,7 +5,7 @@ This compares three ways to animate a theme switch, all in one release build of 
 
 | id | Library | Switch |
 |---|---|---|
-| `ours` | `react-native-theme-reveal` (this package) | `switchTo(target, { transition: 'reveal' })`, origin from the press |
+| `ours` | `react-native-theme-reveal` (this package) | snapshot on press-in (`pressCapture`), then `switchTo(target, { transition: 'reveal' })` on press, origin from the press |
 | `theme-switch-animation` | `react-native-theme-switch-animation` 0.8.0 | `switchTheme` with `type: 'circular'`, `startingPoint: { cx, cy }` from the press |
 | `skia` | The Skia technique: `@shopify/react-native-skia` + `react-native-reanimated` | `makeImageFromView` of the screen root, snapshot drawn on a `Canvas` over the screen, new theme applied underneath, circular hole grown with `withTiming` |
 
@@ -15,6 +15,11 @@ All three libraries build and run.
 
 - One build, one screen (`example/src/BenchmarkScreen.tsx`), the same themed rows for every library.
 - One Run button and a library picker, so the press point and the circle origin are the same for every library.
+- `ours` takes its snapshot on the Run button's `onPressIn` and frees it if the press is cancelled
+  (`reveal.pressCapture`, `example/src/bench/ours.ts`). The other two libraries get no press-in handler. For every
+  library the run starts on `onPress` (the release) and every metric is measured from that release, so whatever
+  happens between press-in and release is free for `ours`. With `input tap` that gap is about 0 ms, and
+  `BENCH_HOLD_MS` (below) gives every library the same longer press.
 - Every library gets the same duration (450 ms, `example/src/bench/shared.ts`), but the circle curves differ:
   - `ours` uses its default reveal curve: the scale grows as `from * (to / from) ^ (g ^ 1.4)` from a 24 dp
     starting height, with `g` linear in time.
@@ -166,6 +171,16 @@ warm-up run and force-stops the app 1 s before each run.
 ```sh
 BENCH_COLD=1 benchmark/android.sh <serial> 3 ours theme-switch-animation skia
 python3 benchmark/report.py benchmark/results/cold/*.json
+```
+
+`input tap` holds the press for about 0 ms, and no finger does that. To hold it like a finger would, set
+`BENCH_HOLD_MS` to the hold time in ms. The press then becomes `input swipe x y x y <ms>` (down and up at the same
+point), the same for every library, and the output goes to `results/hold/` (`results/cold-hold/` with
+`BENCH_COLD=1`). `pressAt` is still the release, so the hold isn't part of any metric.
+
+```sh
+BENCH_HOLD_MS=100 benchmark/android.sh <serial> 6 ours theme-switch-animation skia
+python3 benchmark/report.py benchmark/results/hold/*.json
 ```
 
 ## Run it (iOS simulator)
