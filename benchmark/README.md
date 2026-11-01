@@ -194,6 +194,9 @@ xcrun simctl launch <udid> expo.modules.themereveal.example -benchRuns 'ours the
 xcrun simctl spawn <udid> log stream --style compact --predicate 'eventMessage CONTAINS "BENCH"'
 ```
 
+The auto-run has no press, so on iOS `ours` takes its snapshot at the switch. The iOS numbers don't cover the
+press-in path.
+
 The iOS pass only has the JS columns. I meant to add a `CADisplayLink` frame probe for the simulator but didn't
 get to it. `xctrace` doesn't support hitches on the simulator, and without a physical iPhone the frames come from
 the Mac GPU anyway, so they wouldn't reflect a phone's frame cost.

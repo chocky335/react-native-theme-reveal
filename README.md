@@ -118,18 +118,30 @@ the press starts instead, so the snapshot is ready by the release and the animat
 - `onPressIn` takes the snapshot and keeps it off screen, so the screen stays live while the finger is down.
 - `onPress` calls `switchTo`, which puts the held snapshot on screen right away.
 - A press that ends without `onPress` (the finger slid off the button, or a scroll took over) only gets
-  `onPressOut`, which frees the snapshot. It does that in a later macrotask, because React Native calls
-  `onPressOut` before `onPress` on release.
+  `onPressOut`, which frees the snapshot. It does that in a later macrotask, because on release React Native calls
+  `onPressOut` either before `onPress` in the same dispatch or, for a short press, up to 130 ms after it. A late
+  `onPressOut` from an earlier press leaves the next press's snapshot alone.
 - In `onPress`, call `switchTo` before any `await` that waits on native work. Otherwise the deferred `onPressOut`
   can free the snapshot first, and the switch takes a new one at release as if you weren't using `pressCapture`.
   `await originFromPress(event)` is fine when the event has a touch point.
 - The press-in point becomes the origin for the next switch, like `setOrigin`. A later `setOrigin` call wins.
+- Every press-in costs a full-window copy (about 10 MB, and 25-47 ms of GPU readback on a low-end Android phone),
+  even when the touch turns into a scroll. Don't use `pressCapture` on buttons inside a scrolling list.
 
 The catch is that the snapshot shows the screen at press-in, not at release. In pixels, that means:
-- The pressed button looks pressed in the snapshot (a pressed opacity or a ripple, say), and the old screen keeps
-  that look until the animation uncovers it.
+- The button shows up the way it looked just before the press, with no press feedback. React Native draws the
+  pressed style and the ripple in a frame after `onPressIn`, so the snapshot doesn't have them. At release the
+  feedback goes away at once, hidden under the snapshot.
+- Without `pressCapture`, the snapshot at release shows the pressed look, so the old screen keeps the press
+  feedback until the animation uncovers it.
 - Anything that moved during the press (a clock, a running animation, a progress bar) shows as it was at press-in.
   The snapshot is one press old.
+
+I checked this on a Mi 11 Lite and a Pixel 8 Pro with a button that has a pressed background colour and
+`android_ripple`. The first overlay frame matched the idle button with `pressCapture` and the pressed button
+without it, and outside the reveal hole the press-in snapshot matched the screen at press-in pixel for pixel. iOS
+takes its snapshot the same way (`afterScreenUpdates: false`), but I couldn't check the look there because the
+simulator can't hold a press.
 
 If you need the exact release frame, skip `pressCapture`.
 
@@ -138,6 +150,9 @@ The switch falls back to a new snapshot at release when:
   full-window bitmap (about 10 MB at 1080 x 2400 on Android). The press-in point stays the origin.
 - the window changed size, or the switch comes from another window (on Android, another modal).
 - the app went to the background, `switchTo` got the current theme, or a newer press-in replaced the snapshot.
+- another switch started while the press-in snapshot was being taken, so the snapshot could show the screen from
+  before that switch. That holds even when the other switch ended without an animation.
+- on iOS, a modal was presented during the press, or finished closing during it.
 - a switch animation was on screen at press-in. The package takes no snapshot then, since it would capture that
   animation's current frame.
 
@@ -147,8 +162,10 @@ doesn't take a second one.
 iOS has the same API. There the package takes the key window's `snapshotView(afterScreenUpdates: false)` at
 press-in and adds it to the window at release. That snapshot is cheap on iOS anyway, so the gain is small. iOS
 ignores the view tag for the press-in snapshot, because it always snapshots the key window. Modals open in that
-same window, so a modal that opens during the press doesn't throw the snapshot away, and the switch shows the
-screen from before the modal opened.
+same window, so the package also compares the window's top presented view controller. If a modal was presented
+during the press, or finished closing during it, the switch takes a new snapshot. A modal that's still closing at
+release counts as presented, so the switch uses the press-in snapshot. That snapshot shows the modal where it was
+at press-in, even though it's partway through its closing animation by then.
 
 ## Transitions
 
@@ -241,14 +258,15 @@ Switches to `theme` with an animation.
 `{ onPressIn(event), onPressOut() }` for a `Pressable`. See [Snapshot on press-in](#snapshot-on-press-in).
 - `onPressIn` calls `capture` with the touch point (`pageX`, `pageY`) and `event.nativeEvent.target`. If the event
   has no finite touch point, it does nothing and the switch takes its snapshot at release.
-- `onPressOut` frees the press-in snapshot in a later macrotask, if no `switchTo` has used it by then.
+- `onPressOut` frees the press-in snapshot in a later macrotask, if no `switchTo` has used it by then. Pass it the
+  press event (`Pressable` does). An `onPressOut` whose touch is older than the snapshot's press-in is ignored.
 
 ### `reveal.capture(point, viewTag?)`
 
 Takes the snapshot now and keeps it off screen for the next `switchTo`. It also sets `point` and `viewTag` as the
 origin for the next switch, like `setOrigin`.
 - A second `capture` replaces the first.
-- If no switch uses the snapshot within 3 s, the package frees it.
+- If no switch uses the snapshot within 3 s, the package frees it. The point stays the origin until the press ends.
 - If the native capture fails, the error goes to `onError` and the next switch takes its snapshot as usual.
 
 ### `reveal.dropCapture()`
@@ -310,7 +328,7 @@ type TransitionType = Transition['type']
 type SettledInfo = { transition: TransitionType | null; prepareMs: number; totalMs: number }
 type SwitchOptions = { transition?: TransitionType; shape?: Shape; wipeDirection?: WipeDirection }
 type PressOrigin = { point: Point; viewTag?: number }
-type PressCapture = { onPressIn(event: GestureResponderEvent): void; onPressOut(): void }
+type PressCapture = { onPressIn(event: GestureResponderEvent): void; onPressOut(event?: GestureResponderEvent): void }
 type MeasurableView = {
   measureInWindow(callback: (x: number, y: number, width: number, height: number) => void): void
 }

@@ -20,10 +20,13 @@ struct TransitionRecord: Record {
   @Field var direction: String?
 }
 
-// Snapshot from capture(), kept out of the window until prepare() shows it.
+// Snapshot from capture(), kept out of the window until prepare() shows it. presented is the
+// window's top view controller at capture time, which a modal presented or dismissed since then
+// changes.
 private struct HeldCapture {
   let view: UIView
   weak var window: UIWindow?
+  weak var presented: UIViewController?
   let takenAt: CFTimeInterval
 }
 
@@ -100,7 +103,8 @@ public class ThemeRevealModule: Module {
           let view = RevealOverlay.snapshot(of: window) else {
       return false
     }
-    held = HeldCapture(view: view, window: window, takenAt: CACurrentMediaTime())
+    held = HeldCapture(
+      view: view, window: window, presented: Self.topPresented(in: window), takenAt: CACurrentMediaTime())
     let item = DispatchWorkItem { [weak self] in self?.dropCapture() }
     captureExpiry = item
     DispatchQueue.main.asyncAfter(deadline: .now() + Motion.captureTimeoutSeconds, execute: item)
@@ -201,11 +205,21 @@ public class ThemeRevealModule: Module {
   // now.
   private static func overlay(on window: UIWindow, kept: HeldCapture?) -> RevealOverlay? {
     if let kept, Motion.canUseCapture(
-      sameWindow: kept.window === window, captured: kept.view.frame.size, current: window.bounds.size,
+      sameWindow: kept.window === window, samePresentation: kept.presented === topPresented(in: window),
+      captured: kept.view.frame.size, current: window.bounds.size,
       ageSeconds: CACurrentMediaTime() - kept.takenAt) {
       return RevealOverlay(snapshot: kept.view, window: window)
     }
     return RevealOverlay(window: window)
+  }
+
+  // A React Native <Modal> presents a view controller in the same window.
+  private static func topPresented(in window: UIWindow) -> UIViewController? {
+    var top = window.rootViewController
+    while let next = top?.presentedViewController {
+      top = next
+    }
+    return top
   }
 
   private func findView(_ viewTag: Int) -> UIView? {

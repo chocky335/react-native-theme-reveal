@@ -812,6 +812,62 @@ describe('press-in capture', () => {
     expect(start).toHaveBeenCalledWith({ type: 'crossfade', durationMs: 300 })
   })
 
+  it('ignores a late onPressOut from an earlier press', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 1, pageY: 2, target: 3, timestamp: 100 }))
+    await act(() => reveal.switchTo(dark))
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7, timestamp: 200 }))
+    reveal.pressCapture.onPressOut(pressIn({ pageX: 1, pageY: 2, target: 3, timestamp: 160 }))
+    jest.advanceTimersByTime(0)
+
+    expect(dropCapture).not.toHaveBeenCalled()
+
+    await act(() => reveal.switchTo(light))
+
+    expect(prepare).toHaveBeenLastCalledWith(7)
+    expect(start).toHaveBeenLastCalledWith({ type: 'reveal', origin: { x: 5, y: 6 }, durationMs: 450 })
+  })
+
+  it('drops on an onPressOut from the same press', () => {
+    const { reveal } = setup()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7, timestamp: 200 }))
+    reveal.pressCapture.onPressOut(pressIn({ pageX: 5, pageY: 9, target: 7, timestamp: 450 }))
+    jest.advanceTimersByTime(0)
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+  })
+
+  it('forgets the point of a press cancelled after the timeout', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7 }))
+    jest.advanceTimersByTime(3000)
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+
+    reveal.pressCapture.onPressOut()
+    jest.advanceTimersByTime(0)
+    await act(() => reveal.switchTo(dark))
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledWith({ type: 'crossfade', durationMs: 300 })
+  })
+
+  it('does not free an expired capture again on a same-theme switch', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.capture({ x: 5, y: 6 }, 7)
+    jest.advanceTimersByTime(3000)
+    await act(() => reveal.switchTo(light))
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps a later setOrigin point when the capture drops', async () => {
     const { reveal, mount } = setup()
     mount()

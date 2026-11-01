@@ -15,7 +15,29 @@ class CaptureRulesTest {
     coverH: Int = 2400,
     takenAtMs: Long = 10_000L,
     nowMs: Long = 10_100L,
-  ) = CaptureRules.usable(ticket, currentTicket, sameWindow, snapshotW, snapshotH, coverW, coverH, takenAtMs, nowMs)
+    generation: Int = 9,
+    generationBefore: Int = 9,
+  ) = CaptureRules.usable(
+    ticket,
+    currentTicket,
+    generation,
+    generationBefore,
+    sameWindow,
+    snapshotW,
+    snapshotH,
+    coverW,
+    coverH,
+    takenAtMs,
+    nowMs,
+  )
+
+  private fun keep(
+    ticket: Int = 4,
+    currentTicket: Int = 4,
+    generation: Int = 9,
+    currentGeneration: Int = 9,
+    overlayShown: Boolean = false,
+  ) = CaptureRules.keepResult(ticket, currentTicket, generation, currentGeneration, overlayShown)
 
   @Test
   fun aFreshCaptureOfTheSameWindowAndSizeIsUsable() {
@@ -48,6 +70,31 @@ class CaptureRulesTest {
   @Test
   fun aCaptureFromTheFutureIsNotUsable() {
     assertFalse(usable(takenAtMs = 10_000L, nowMs = 9_999L))
+  }
+
+  @Test
+  fun aPrepareAfterTheCaptureStartedVoidsIt() {
+    assertFalse(usable(generation = 9, generationBefore = 10))
+  }
+
+  @Test
+  fun aCaptureResultWithNothingInBetweenIsKept() {
+    assertTrue(keep())
+  }
+
+  @Test
+  fun aVoidedCaptureResultIsDropped() {
+    assertFalse(keep(currentTicket = 5))
+  }
+
+  @Test
+  fun aCaptureResultIsDroppedWhenAPrepareStartedDuringTheCopy() {
+    assertFalse(keep(generation = 9, currentGeneration = 10))
+  }
+
+  @Test
+  fun aCaptureResultIsDroppedWhenAnOverlayShows() {
+    assertFalse(keep(overlayShown = true))
   }
 
   @Test

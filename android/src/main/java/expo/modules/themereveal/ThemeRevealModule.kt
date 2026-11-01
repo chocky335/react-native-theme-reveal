@@ -27,9 +27,11 @@ import expo.modules.kotlin.modules.ModuleDefinition
 // overlay at (screenX, screenY).
 private class OverlayGeometry(val cover: View, val rootX: Int, val rootY: Int, val screenX: Int, val screenY: Int)
 
-// Snapshot from capture(), kept out of the window until prepare() attaches it. root is the window root it shows.
+// Snapshot from capture(), kept out of the window until prepare() attaches it. root is the window root it shows,
+// generation the prepare generation when the capture started.
 private class HeldCapture(
   val ticket: Int,
+  val generation: Int,
   val activity: Activity,
   val root: View?,
   val snapshot: Snapshot,
@@ -154,6 +156,7 @@ class ThemeRevealModule : Module() {
   private fun capture(viewTag: Int?, promise: Promise) {
     voidCapture("replaced")
     val ticket = captureTicket
+    val gen = generation
     val activity = appContext.currentActivity
     // An overlay on screen would end up in the snapshot, so the switch captures after it instead.
     if (overlay != null || activity == null || activity.window?.decorView == null || activity.isFinishing ||
@@ -177,16 +180,19 @@ class ThemeRevealModule : Module() {
         promise.resolve(false)
         return@capture
       }
-      if (ticket != captureTicket || activity.isFinishing || activity.isDestroyed || !isResumed(activity) ||
-        !snapshot.host.isAttachedToWindow
+      // A prepare that started during the copy (its PixelCopy can run before or after this one) makes this a frame
+      // from before that switch.
+      if (!CaptureRules.keepResult(ticket, captureTicket, gen, generation, overlay != null) || activity.isFinishing ||
+        activity.isDestroyed || !isResumed(activity) || !snapshot.host.isAttachedToWindow
       ) {
         snapshot.bitmap.recycle()
+        debug("dropped a capture result: voided, another switch or no window")
         promise.resolve(false)
         return@capture
       }
       // Upload during the press, so the overlay's first frame doesn't have to.
       snapshot.bitmap.prepareToDraw()
-      held = HeldCapture(ticket, activity, root, snapshot, SystemClock.uptimeMillis())
+      held = HeldCapture(ticket, gen, activity, root, snapshot, SystemClock.uptimeMillis())
       mainHandler.postDelayed(captureExpiry, CaptureRules.TIMEOUT_MS)
       promise.resolve(true)
     }
@@ -209,6 +215,7 @@ class ThemeRevealModule : Module() {
   }
 
   private fun prepare(viewTag: Int?, promise: Promise) {
+    val generationBefore = generation
     val ticket = ++generation
     removeOverlay()
     val activity = appContext.currentActivity
@@ -221,12 +228,18 @@ class ThemeRevealModule : Module() {
       promise.resolve(false)
       return
     }
+    val root = rootOf(activity, viewTag)
     val tapped = viewTag?.let { findView(it) }?.takeIf { it.isAttachedToWindow }
-    val root = tapped?.rootView ?: WindowSnapshot.focusedRoot(activity)
     val reactRoot = tapped?.let { WindowSnapshot.reactRootOf(it) } ?: root ?: decor
+    // A switch that ends without an overlay still changes the theme (JS applies it), so a capture that started
+    // during its copy shows the screen from before. A newer prepare (ticket != generation) handles its own.
+    fun fail() {
+      if (ticket == generation) voidCapture("switch failed")
+      promise.resolve(false)
+    }
     fun attach(snapshot: Snapshot?) {
       if (snapshot == null) {
-        promise.resolve(false)
+        fail()
         return
       }
       val bitmap = snapshot.bitmap
@@ -234,11 +247,11 @@ class ThemeRevealModule : Module() {
         !snapshot.host.isAttachedToWindow
       ) {
         WindowSnapshot.kept.give(bitmap)
-        promise.resolve(false)
+        fail()
         return
       }
       // Kick off the snapshot's GPU upload now, on the RenderThread, so it doesn't land in the overlay's first
-      // frame.
+      // frame. A no-op for a held capture, whose upload started at capture time.
       bitmap.prepareToDraw()
       val view = RevealOverlayView(activity, bitmap)
       val params = FrameLayout.LayoutParams(bitmap.width, bitmap.height, Gravity.TOP or Gravity.LEFT).apply {
@@ -250,6 +263,8 @@ class ThemeRevealModule : Module() {
       overlay = view
       geometry = OverlayGeometry(snapshot.cover, rootAt[0], rootAt[1], snapshot.screenX, snapshot.screenY)
       mainHandler.postDelayed(failsafe, FAILSAFE_MS)
+      // Any capture held or running right now shows the screen from before this switch.
+      voidCapture("switch attached")
       // JS applies the theme when this resolves, and that render blocks the JS thread. Resolve in the next frame's
       // callbacks, after React Native's timers for that frame, so the render starts after that frame's JS callbacks
       // instead of holding them up. The overlay draws in that same frame.
@@ -259,6 +274,8 @@ class ThemeRevealModule : Module() {
     if (kept != null && CaptureRules.usable(
         kept.ticket,
         captureTicket,
+        kept.generation,
+        generationBefore,
         kept.activity === activity && kept.root === root,
         kept.snapshot.bitmap.width,
         kept.snapshot.bitmap.height,

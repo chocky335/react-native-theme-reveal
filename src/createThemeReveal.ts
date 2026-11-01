@@ -37,7 +37,7 @@ export type SwitchOptions = {
 // without a switch frees it.
 export type PressCapture = {
   onPressIn(event: GestureResponderEvent): void
-  onPressOut(): void
+  onPressOut(event?: GestureResponderEvent): void
 }
 
 export type ThemeReveal<T> = {
@@ -63,6 +63,15 @@ type Captured = {
   origin: Origin
   expiry: ReturnType<typeof setTimeout>
   drop?: ReturnType<typeof setTimeout>
+  // Touch time of the press-in, to tell this press's onPressOut apart from a late one from an earlier press.
+  pressedAt?: number
+  // Native freed the snapshot after the timeout. The origin stays until the press ends.
+  expired?: boolean
+}
+
+const timestampOf = (event: GestureResponderEvent | undefined): number | undefined => {
+  const { timestamp }: { timestamp?: unknown } = event?.nativeEvent ?? {}
+  return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : undefined
 }
 
 // A capture no switch uses is freed after this long. Native also frees it on its own after the same time.
@@ -109,16 +118,17 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
 
   const freeCapture = () => ThemeRevealModule.dropCapture().catch(onError)
 
-  const capture = (point: Point, viewTag?: number) => {
+  const startCapture = (point: Point, viewTag: number | undefined, pressedAt: number | undefined) => {
     releaseCapture()
     const origin = { point, viewTag }
     pendingOrigin = origin
     // A long press keeps its point for the switch on release, but not the snapshot.
     const current: Captured = {
       origin,
+      pressedAt,
       expiry: setTimeout(() => {
         if (captured !== current) return
-        releaseCapture()
+        current.expired = true
         freeCapture()
       }, CAPTURE_TIMEOUT_MS),
     }
@@ -126,23 +136,29 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
     ThemeRevealModule.capture(viewTag).catch(onError)
   }
 
+  const capture = (point: Point, viewTag?: number) => startCapture(point, viewTag, undefined)
+
   const dropCapture = () => {
     const current = releaseCapture()
     if (current && pendingOrigin === current.origin) pendingOrigin = null
-    freeCapture()
+    if (!current?.expired) freeCapture()
   }
 
   // On release React Native calls onPressOut before onPress in the same dispatch (or up to 130 ms after onPress
   // for a short press), and a cancelled press gets onPressOut without onPress. So onPressOut only drops the
-  // capture in a later macrotask, and only if no switchTo has taken it by then.
+  // capture in a later macrotask, and only if no switchTo has taken it by then. A late onPressOut whose touch is
+  // older than the capture's press-in belongs to an earlier press and leaves the capture alone.
   const pressCapture: PressCapture = {
     onPressIn: (event) => {
       const origin = pagePointOf(event)
-      if (origin) capture(origin.point, origin.viewTag)
+      if (origin) startCapture(origin.point, origin.viewTag, timestampOf(event))
     },
-    onPressOut: () => {
+    onPressOut: (event) => {
       const current = captured
       if (!current) return
+      const releasedAt = timestampOf(event)
+      if (current.pressedAt !== undefined && releasedAt !== undefined && releasedAt < current.pressedAt)
+        return
       clearTimeout(current.drop)
       current.drop = setTimeout(() => {
         if (captured === current) dropCapture()
@@ -158,7 +174,7 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
     const startedAt = performance.now()
 
     if (Object.is(getTheme(), theme)) {
-      if (held) freeCapture()
+      if (held && !held.expired) freeCapture()
       try {
         await ThemeRevealModule.cancel()
       } catch (error) {
