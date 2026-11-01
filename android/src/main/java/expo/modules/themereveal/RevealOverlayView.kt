@@ -122,6 +122,12 @@ internal class RevealOverlayView(context: Context, private val snapshot: Bitmap)
 
   override fun onDraw(canvas: Canvas) {
     if (snapshot.isRecycled) return
+    // A software canvas (a screenshot drawn with View.draw, say) throws on a hardware bitmap, so leave it out.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && snapshot.config == Bitmap.Config.HARDWARE &&
+      !canvas.isHardwareAccelerated
+    ) {
+      return
+    }
     when (mode) {
       Mode.REVEAL -> if (scale > 0f) clipOut(canvas, shapeAtScale())
       Mode.INVERSE_REVEAL -> canvas.clipPath(shapeAtScale())

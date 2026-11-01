@@ -251,7 +251,8 @@ class ThemeRevealModule : Module() {
         return
       }
       // Kick off the snapshot's GPU upload now, on the RenderThread, so it doesn't land in the overlay's first
-      // frame. A no-op for a held capture, whose upload started at capture time.
+      // frame. A no-op for a held capture, whose upload started at capture time, and for a GPU snapshot, which is
+      // already on the GPU.
       bitmap.prepareToDraw()
       val view = RevealOverlayView(activity, bitmap)
       val params = FrameLayout.LayoutParams(bitmap.width, bitmap.height, Gravity.TOP or Gravity.LEFT).apply {

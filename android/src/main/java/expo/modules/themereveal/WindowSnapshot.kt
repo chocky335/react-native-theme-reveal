@@ -1,6 +1,7 @@
 package expo.modules.themereveal
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -42,8 +43,9 @@ internal object WindowSnapshot {
     }
     val screen = locationOf(decor)
     if (root == null || root === decor) {
-      capture(window, decor.width, decor.height, handler, true) { bitmap ->
-        onResult(bitmap?.let { Snapshot(it, decor, decor, 0, 0, screen[0], screen[1]) })
+      val pixelCopy = { done: (Bitmap?) -> Unit -> capture(window, decor.width, decor.height, handler, true, done) }
+      captureWindows(activity, decor, listOf(window), handler, { GpuSnapshot.drawWindow(it, decor) }, pixelCopy) {
+        onResult(it?.let { bitmap -> Snapshot(bitmap, decor, decor, 0, 0, screen[0], screen[1]) })
       }
       return
     }
@@ -63,28 +65,82 @@ internal object WindowSnapshot {
     } else {
       0
     }
-    capturePair(window, decor.width, decor.height, dialog, dialogDecor.width, dialogDecor.height, handler) { back, front ->
-      if (back == null || front == null) {
-        back?.let(kept::give)
-        front?.recycle()
-        onResult(null)
-        return@capturePair
+    // The GPU draws both windows and the dim into one picture, like compose does with the two PixelCopy bitmaps.
+    val draw = { canvas: Canvas ->
+      GpuSnapshot.drawWindow(canvas, decor)
+      if (dim > 0) canvas.drawColor(Color.argb(dim, 0, 0, 0))
+      if (!frame.isEmpty) {
+        val count = canvas.save()
+        canvas.clipRect(frame.left, frame.top, frame.right, frame.bottom)
+        canvas.translate(dialogX.toFloat(), dialogY.toFloat())
+        GpuSnapshot.drawWindow(canvas, dialogDecor)
+        canvas.restoreToCount(count)
       }
-      val composed = try {
-        compose(back, front, frame, dialogX, dialogY, dim)
-        true
-      } catch (_: RuntimeException) {
-        false
-      } finally {
-        front.recycle()
-      }
-      if (!composed) {
-        kept.give(back)
-        onResult(null)
-        return@capturePair
-      }
-      onResult(Snapshot(back, dialogDecor, decor, -dialogX, -dialogY, screen[0], screen[1]))
     }
+    val pixelCopy = { done: (Bitmap?) -> Unit ->
+      capturePair(window, decor.width, decor.height, dialog, dialogDecor.width, dialogDecor.height, handler) { back, front ->
+        if (back == null || front == null) {
+          back?.let(kept::give)
+          front?.recycle()
+          done(null)
+          return@capturePair
+        }
+        val composed = try {
+          compose(back, front, frame, dialogX, dialogY, dim)
+          true
+        } catch (_: RuntimeException) {
+          false
+        } finally {
+          front.recycle()
+        }
+        if (!composed) {
+          kept.give(back)
+          done(null)
+          return@capturePair
+        }
+        done(back)
+      }
+    }
+    captureWindows(activity, decor, listOf(window, dialog), handler, draw, pixelCopy) {
+      onResult(it?.let { bitmap -> Snapshot(bitmap, dialogDecor, decor, -dialogX, -dialogY, screen[0], screen[1]) })
+    }
+  }
+
+  // Set when a GPU capture timed out or threw: from then on the process captures with PixelCopy.
+  private var gpuOff = false
+
+  // Snapshot of windows, decor-sized, drawn on the GPU on API 29+. Read back with PixelCopy on API 26-28, for a
+  // wide color window, and when the GPU capture fails.
+  private fun captureWindows(
+    activity: Activity,
+    decor: View,
+    windows: List<Window>,
+    handler: Handler,
+    draw: (Canvas) -> Unit,
+    pixelCopy: ((Bitmap?) -> Unit) -> Unit,
+    onResult: (Bitmap?) -> Unit,
+  ) {
+    val api = Build.VERSION.SDK_INT
+    if (api >= Build.VERSION_CODES.Q) {
+      val defaultColor = windows.all { it.colorMode == ActivityInfo.COLOR_MODE_DEFAULT }
+      val light = if (CapturePlan.path(api, defaultColor, gpuOff) == CapturePath.GPU) {
+        GpuSnapshot.lightOf(activity, decor)
+      } else {
+        null
+      }
+      if (light != null && decor.width > 0 && decor.height > 0) {
+        GpuSnapshot.capture(decor.width, decor.height, light, handler, copyHandler, draw) { bitmap, failure ->
+          if (bitmap != null) {
+            onResult(bitmap)
+            return@capture
+          }
+          if (failure != null && CapturePlan.turnsGpuOff(failure)) gpuOff = true
+          pixelCopy(onResult)
+        }
+        return
+      }
+    }
+    pixelCopy(onResult)
   }
 
   // Focused window root: the activity decor view, or a React Native modal's decor view.
@@ -210,7 +266,7 @@ internal object WindowSnapshot {
   private var keeping = false
 
   // Never quit the copy thread. Without it PixelCopy never calls back, prepare never resolves and the switch never
-  // applies the theme.
+  // applies the theme. The GPU capture takes its images on it too.
   private val copyHandler: Handler by lazy {
     val thread = HandlerThread("ThemeRevealCopy", Process.THREAD_PRIORITY_DISPLAY)
     thread.start()

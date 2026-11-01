@@ -377,6 +377,29 @@ const onPress = async (event: GestureResponderEvent) => {
 - If the path doesn't parse, the package falls back to the circle and logs a warning naming the path. On Android,
   a path with compact arc flags ends up as the circle.
 
+## How it works on Android
+
+How the package takes the snapshot depends on the API level.
+
+On API 29 and up it draws the window's views again, on the GPU, into a hardware bitmap. The views draw the display
+lists they already have, so no layout and no JS run for it, and elevation shadows use the same light as the window.
+No pixels make the trip from the GPU to the CPU and back.
+
+On API 26 to 28 it reads the window back from the GPU with `PixelCopy` and then uploads it again. API 29 and up
+falls back to `PixelCopy` too when a window uses wide color mode (the GPU snapshot is sRGB) or when the GPU snapshot
+fails. If no snapshot comes within 250 ms, or the GPU snapshot throws, the app sticks with `PixelCopy` until its
+process ends.
+
+I compared the GPU snapshot with `PixelCopy` on a Mi 11 Lite (API 33) and a Pixel 8 Pro (API 37). On the home
+screen, the benchmark screen, a screen with elevation shadows and a full-screen modal, not a single pixel differs.
+With a transparent modal and a dim, 0.6% to 0.7% of the pixels differ by 1 or 2 out of 255 in a channel, at
+translucent edges like text under the dim or the edge of the card's shadow. The GPU blends the dim and the dialog
+in one pass, while `PixelCopy` reads back each window and the CPU blends them, so the rounding comes out
+differently. You can't see it.
+
+A screenshot that draws the window into a software canvas (`View.draw`) while the overlay is up leaves the overlay
+out, because a software canvas can't draw a hardware bitmap.
+
 ## Modals
 
 A switch from inside a React Native `<Modal>` animates too.
