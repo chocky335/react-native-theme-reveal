@@ -10,6 +10,11 @@ describe('jest-expo native module mock', () => {
     await expect(ThemeRevealModule.cancel()).resolves.toBeUndefined()
   })
 
+  it('resolves capture to false and dropCapture to undefined', async () => {
+    await expect(ThemeRevealModule.capture(1)).resolves.toBe(false)
+    await expect(ThemeRevealModule.dropCapture()).resolves.toBeUndefined()
+  })
+
   it('lets switchTo apply the theme at once', async () => {
     let theme = 'light'
     const onSettled = jest.fn()

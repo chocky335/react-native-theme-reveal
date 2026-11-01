@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect } from 'react'
+import type { GestureResponderEvent } from 'react-native'
 
 import ThemeRevealModule from './ThemeRevealModule'
+import { pagePointOf } from './originFromPress'
 import { resolveTransition } from './resolveTransition'
 import { createStore, useStore } from './store'
 import type { Point, Shape, Transition, TransitionType, WipeDirection } from './types'
@@ -31,8 +33,18 @@ export type SwitchOptions = {
   wipeDirection?: WipeDirection
 }
 
+// Spread on a Pressable whose onPress calls switchTo. The snapshot is taken on press-in, and a press that ends
+// without a switch frees it.
+export type PressCapture = {
+  onPressIn(event: GestureResponderEvent): void
+  onPressOut(): void
+}
+
 export type ThemeReveal<T> = {
   setOrigin(point: Point, viewTag?: number): void
+  capture(point: Point, viewTag?: number): void
+  dropCapture(): void
+  pressCapture: PressCapture
   switchTo(theme: T, options?: SwitchOptions): Promise<void>
   useStart(): void
   useHeldTheme(): T | null
@@ -44,6 +56,17 @@ type PendingStart = {
   startedAt: number
   prepareMs: number
 }
+
+type Origin = { point: Point; viewTag?: number }
+
+type Captured = {
+  origin: Origin
+  expiry: ReturnType<typeof setTimeout>
+  drop?: ReturnType<typeof setTimeout>
+}
+
+// A capture no switch uses is freed after this long. Native also frees it on its own after the same time.
+const CAPTURE_TIMEOUT_MS = 3000
 
 type RevealState<T> = {
   pending: PendingStart | null
@@ -64,7 +87,8 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
   const onError = (error: unknown) => call(options.onError ?? warn, error)
   const onSettled = (info: SettledInfo) => call(options.onSettled, info)
   const store = createStore<RevealState<T>>({ pending: null, held: null })
-  let pendingOrigin: { point: Point; viewTag?: number } | null = null
+  let pendingOrigin: Origin | null = null
+  let captured: Captured | null = null
   let latestId = 0
   let warmedUp = false
 
@@ -72,13 +96,69 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
     pendingOrigin = { point, viewTag }
   }
 
+  // Forgets the JS side of the capture and returns it. Native keeps it until prepare, cancel or dropCapture.
+  const releaseCapture = () => {
+    const current = captured
+    captured = null
+    if (current) {
+      clearTimeout(current.expiry)
+      clearTimeout(current.drop)
+    }
+    return current
+  }
+
+  const freeCapture = () => ThemeRevealModule.dropCapture().catch(onError)
+
+  const capture = (point: Point, viewTag?: number) => {
+    releaseCapture()
+    const origin = { point, viewTag }
+    pendingOrigin = origin
+    // A long press keeps its point for the switch on release, but not the snapshot.
+    const current: Captured = {
+      origin,
+      expiry: setTimeout(() => {
+        if (captured !== current) return
+        releaseCapture()
+        freeCapture()
+      }, CAPTURE_TIMEOUT_MS),
+    }
+    captured = current
+    ThemeRevealModule.capture(viewTag).catch(onError)
+  }
+
+  const dropCapture = () => {
+    const current = releaseCapture()
+    if (current && pendingOrigin === current.origin) pendingOrigin = null
+    freeCapture()
+  }
+
+  // On release React Native calls onPressOut before onPress in the same dispatch (or up to 130 ms after onPress
+  // for a short press), and a cancelled press gets onPressOut without onPress. So onPressOut only drops the
+  // capture in a later macrotask, and only if no switchTo has taken it by then.
+  const pressCapture: PressCapture = {
+    onPressIn: (event) => {
+      const origin = pagePointOf(event)
+      if (origin) capture(origin.point, origin.viewTag)
+    },
+    onPressOut: () => {
+      const current = captured
+      if (!current) return
+      clearTimeout(current.drop)
+      current.drop = setTimeout(() => {
+        if (captured === current) dropCapture()
+      }, 0)
+    },
+  }
+
   const switchTo = async (theme: T, switchOptions?: SwitchOptions) => {
+    const held = releaseCapture()
     const origin = pendingOrigin
     pendingOrigin = null
     const id = ++latestId
     const startedAt = performance.now()
 
     if (Object.is(getTheme(), theme)) {
+      if (held) freeCapture()
       try {
         await ThemeRevealModule.cancel()
       } catch (error) {
@@ -154,5 +234,5 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
 
   const useHeldTheme = () => useStore(store, (state) => state.held?.theme ?? null)
 
-  return { setOrigin, switchTo, useStart, useHeldTheme }
+  return { setOrigin, capture, dropCapture, pressCapture, switchTo, useStart, useHeldTheme }
 }

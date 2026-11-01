@@ -8,6 +8,8 @@ type NativeMock = {
   start: jest.Mock<Promise<void>, [Transition]>
   cancel: jest.Mock<Promise<void>, []>
   warmUp: jest.Mock<Promise<void>, []>
+  capture: jest.Mock<Promise<boolean>, [number | undefined]>
+  dropCapture: jest.Mock<Promise<void>, []>
 }
 
 jest.mock('expo', () => {
@@ -17,6 +19,8 @@ jest.mock('expo', () => {
     start: jest.fn(() => Promise.resolve()),
     cancel: jest.fn(() => Promise.resolve()),
     warmUp: jest.fn(() => Promise.resolve()),
+    capture: jest.fn(() => Promise.resolve(true)),
+    dropCapture: jest.fn(() => Promise.resolve()),
   }
   return {
     ...actual,
@@ -61,5 +65,16 @@ describe('ThemeRevealModule', () => {
     await ThemeRevealModule.warmUp()
     expect(native.warmUp).toHaveBeenCalledTimes(1)
     expect(native.warmUp).toHaveBeenCalledWith()
+  })
+
+  it('passes the view tag to native capture', async () => {
+    await expect(ThemeRevealModule.capture(7)).resolves.toBe(true)
+    expect(native.capture).toHaveBeenCalledTimes(1)
+    expect(native.capture).toHaveBeenCalledWith(7)
+  })
+
+  it('calls native dropCapture', async () => {
+    await ThemeRevealModule.dropCapture()
+    expect(native.dropCapture).toHaveBeenCalledTimes(1)
   })
 })

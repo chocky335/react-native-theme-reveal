@@ -1,12 +1,20 @@
 import { act, renderHook } from '@testing-library/react-native'
 import { StrictMode } from 'react'
+import type { GestureResponderEvent } from 'react-native'
 
 import ThemeRevealModule from '../ThemeRevealModule'
 import { createThemeReveal, type ThemeRevealOptions } from '../createThemeReveal'
 
 jest.mock('../ThemeRevealModule', () => ({
   __esModule: true,
-  default: { prepare: jest.fn(), start: jest.fn(), cancel: jest.fn(), warmUp: jest.fn() },
+  default: {
+    prepare: jest.fn(),
+    start: jest.fn(),
+    cancel: jest.fn(),
+    capture: jest.fn(),
+    dropCapture: jest.fn(),
+    warmUp: jest.fn(),
+  },
 }))
 
 type Theme = { name: string }
@@ -19,6 +27,8 @@ const prepare = jest.mocked(ThemeRevealModule.prepare)
 const start = jest.mocked(ThemeRevealModule.start)
 const cancel = jest.mocked(ThemeRevealModule.cancel)
 const warmUp = jest.mocked(ThemeRevealModule.warmUp)
+const capture = jest.mocked(ThemeRevealModule.capture)
+const dropCapture = jest.mocked(ThemeRevealModule.dropCapture)
 
 const setup = (options: Partial<ThemeRevealOptions<Theme>> = {}) => {
   let current = light
@@ -58,6 +68,8 @@ beforeEach(() => {
   start.mockReset().mockResolvedValue(undefined)
   cancel.mockReset().mockResolvedValue(undefined)
   warmUp.mockReset().mockResolvedValue(undefined)
+  capture.mockReset().mockResolvedValue(true)
+  dropCapture.mockReset().mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -622,5 +634,194 @@ describe('onSettled', () => {
 
     expect(onSettled).toHaveBeenCalledTimes(1)
     expect(onSettled).toHaveBeenCalledWith({ transition: null, prepareMs: 20, totalMs: 20 })
+  })
+})
+
+describe('press-in capture', () => {
+  const pressIn = (nativeEvent: Record<string, unknown>) =>
+    ({ nativeEvent }) as unknown as GestureResponderEvent
+
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('switches with one prepare that uses the held capture and its point', async () => {
+    const { reveal, getTheme, mount } = setup()
+    mount()
+
+    reveal.capture({ x: 5, y: 6 }, 7)
+
+    expect(capture).toHaveBeenCalledTimes(1)
+    expect(capture).toHaveBeenCalledWith(7)
+
+    await act(() => reveal.switchTo(dark))
+    jest.runAllTimers()
+
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(prepare).toHaveBeenCalledWith(7)
+    expect(getTheme()).toBe(dark)
+    expect(start).toHaveBeenCalledWith({ type: 'reveal', origin: { x: 5, y: 6 }, durationMs: 450 })
+    expect(dropCapture).not.toHaveBeenCalled()
+  })
+
+  it('captures from the press-in point and target', () => {
+    const { reveal } = setup()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7 }))
+
+    expect(capture).toHaveBeenCalledTimes(1)
+    expect(capture).toHaveBeenCalledWith(7)
+  })
+
+  it('does not capture a press-in with no page point', () => {
+    const { reveal } = setup()
+
+    reveal.pressCapture.onPressIn(pressIn({ target: 7 }))
+
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('drops a cancelled press after a deferral and forgets its point', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7 }))
+    reveal.pressCapture.onPressOut()
+
+    expect(dropCapture).not.toHaveBeenCalled()
+
+    jest.advanceTimersByTime(0)
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(prepare).toHaveBeenCalledWith(undefined)
+    expect(start).toHaveBeenCalledWith({ type: 'crossfade', durationMs: 300 })
+  })
+
+  it('cancels the pending drop when switchTo follows onPressOut', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7 }))
+    reveal.pressCapture.onPressOut()
+    await act(() => reveal.switchTo(dark))
+    jest.runAllTimers()
+
+    expect(dropCapture).not.toHaveBeenCalled()
+    expect(prepare).toHaveBeenCalledWith(7)
+    expect(start).toHaveBeenCalledWith({ type: 'reveal', origin: { x: 5, y: 6 }, durationMs: 450 })
+  })
+
+  it('ignores an onPressOut that comes after switchTo', async () => {
+    const { reveal } = setup()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7 }))
+    await reveal.switchTo(dark)
+    reveal.pressCapture.onPressOut()
+    jest.runAllTimers()
+
+    expect(dropCapture).not.toHaveBeenCalled()
+  })
+
+  it('drops the capture after the timeout and keeps its point', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.capture({ x: 5, y: 6 }, 7)
+    jest.advanceTimersByTime(2999)
+
+    expect(dropCapture).not.toHaveBeenCalled()
+
+    jest.advanceTimersByTime(1)
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(start).toHaveBeenCalledWith({ type: 'reveal', origin: { x: 5, y: 6 }, durationMs: 450 })
+  })
+
+  it('replaces the first capture with a second one', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.capture({ x: 1, y: 2 }, 1)
+    jest.advanceTimersByTime(2000)
+    reveal.capture({ x: 5, y: 6 }, 7)
+    jest.advanceTimersByTime(1500)
+
+    expect(dropCapture).not.toHaveBeenCalled()
+    expect(capture).toHaveBeenNthCalledWith(2, 7)
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(prepare).toHaveBeenCalledWith(7)
+    expect(start).toHaveBeenCalledWith({ type: 'reveal', origin: { x: 5, y: 6 }, durationMs: 450 })
+  })
+
+  it('drops the capture on a same-theme switch', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.capture({ x: 5, y: 6 }, 7)
+    await act(() => reveal.switchTo(light))
+    jest.runAllTimers()
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+    expect(prepare).not.toHaveBeenCalled()
+
+    await act(() => reveal.switchTo(dark))
+
+    expect(start).toHaveBeenCalledWith({ type: 'crossfade', durationMs: 300 })
+  })
+
+  it('reports a capture rejection through onError and still applies the theme', async () => {
+    const error = new Error('no window')
+    capture.mockRejectedValue(error)
+    const { reveal, onError, getTheme, mount } = setup()
+    mount()
+
+    reveal.capture({ x: 5, y: 6 }, 7)
+    await act(() => reveal.switchTo(dark))
+
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledWith(error)
+    expect(getTheme()).toBe(dark)
+  })
+
+  it('forgets the capture point and frees the capture on dropCapture', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.capture({ x: 5, y: 6 }, 7)
+    reveal.dropCapture()
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+
+    jest.runAllTimers()
+    await act(() => reveal.switchTo(dark))
+
+    expect(dropCapture).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledWith({ type: 'crossfade', durationMs: 300 })
+  })
+
+  it('keeps a later setOrigin point when the capture drops', async () => {
+    const { reveal, mount } = setup()
+    mount()
+
+    reveal.pressCapture.onPressIn(pressIn({ pageX: 5, pageY: 6, target: 7 }))
+    reveal.pressCapture.onPressOut()
+    reveal.setOrigin({ x: 8, y: 9 })
+    jest.advanceTimersByTime(0)
+    await act(() => reveal.switchTo(dark))
+
+    expect(start).toHaveBeenCalledWith({ type: 'reveal', origin: { x: 8, y: 9 }, durationMs: 450 })
   })
 })

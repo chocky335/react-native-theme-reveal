@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native'
 import type { GestureResponderEvent } from 'react-native'
+import type { PressCapture } from 'react-native-theme-reveal'
 
 import { Button } from './Button'
 import { MODAL_PRESENTATIONS, ModalScreen } from './ModalScreen'
@@ -20,6 +21,8 @@ type Props = {
   measureOnly: Toggle
   switchOnBackground: Toggle
   onSwitch: (button: SwitchButton, event: GestureResponderEvent, view: View | null) => void
+  // Takes the snapshot on press-in, and onSwitch switches on release.
+  pressCapture: PressCapture
   onOpenBenchmark: () => void
 }
 
@@ -31,6 +34,7 @@ export function HomeScreen({
   measureOnly,
   switchOnBackground,
   onSwitch,
+  pressCapture,
   onOpenBenchmark,
 }: Props) {
   const [presentation, setPresentation] = useState<ModalPresentation>('fullScreen')
@@ -73,6 +77,8 @@ export function HomeScreen({
           label={button.label}
           colors={colors}
           onPress={(event, view) => onSwitch(button, event, view)}
+          onPressIn={pressCapture.onPressIn}
+          onPressOut={pressCapture.onPressOut}
         />
       ))}
 
@@ -115,6 +121,7 @@ export function HomeScreen({
         colors={colors}
         topInset={topInset}
         onSwitch={onSwitch}
+        pressCapture={pressCapture}
         onClose={() => setModalVisible(false)}
       />
     </ScrollView>

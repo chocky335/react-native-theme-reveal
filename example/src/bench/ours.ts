@@ -1,4 +1,4 @@
-// react-native-theme-reveal, circle reveal from the press point.
+// react-native-theme-reveal, circle reveal from the press point. The snapshot is taken on press-in.
 import { useLayoutEffect } from 'react'
 import { createThemeReveal } from 'react-native-theme-reveal'
 import type { Point } from 'react-native-theme-reveal'
@@ -39,6 +39,9 @@ export function Host(props: HostProps) {
   reveal.useStart()
   return null
 }
+
+// The Run button's onPressIn and onPressOut.
+export const press = reveal.pressCapture
 
 // Resolves when the reveal settles.
 export function run(target: Theme, origin: Point): Promise<RunResult> {

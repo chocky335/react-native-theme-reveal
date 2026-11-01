@@ -11,16 +11,26 @@ export type PressOrigin = { point: Point; viewTag?: number }
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
 
+const viewTagOf = (event: GestureResponderEvent): { viewTag?: number } => {
+  const { target }: { target?: unknown } = event.nativeEvent
+  return typeof target === 'number' ? { viewTag: target } : {}
+}
+
+// Touch point and target tag of a press event, or null when the event has no page point.
+export function pagePointOf(event: GestureResponderEvent): PressOrigin | null {
+  const { pageX, pageY }: { pageX?: unknown; pageY?: unknown } = event.nativeEvent
+  if (!isFiniteNumber(pageX) || !isFiniteNumber(pageY)) return null
+  return { point: { x: pageX, y: pageY }, ...viewTagOf(event) }
+}
+
 export function originFromPress(
   event: GestureResponderEvent,
   fallbackView?: MeasurableView | null,
 ): Promise<PressOrigin | null> {
-  const { pageX, pageY, target }: { pageX?: unknown; pageY?: unknown; target?: unknown } = event.nativeEvent
-  const tag = typeof target === 'number' ? { viewTag: target } : {}
+  const tag = viewTagOf(event)
+  const origin = pagePointOf(event)
 
-  if (isFiniteNumber(pageX) && isFiniteNumber(pageY)) {
-    return Promise.resolve({ point: { x: pageX, y: pageY }, ...tag })
-  }
+  if (origin) return Promise.resolve(origin)
   if (!fallbackView) return Promise.resolve(null)
   return new Promise((resolve) => {
     fallbackView.measureInWindow((x, y, width, height) => {

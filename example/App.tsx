@@ -81,6 +81,7 @@ export default function App() {
           onSwitch={(button, event, view) =>
             void switchFromPress(reveal, getTheme, button, event, view, measureOnly)
           }
+          pressCapture={reveal.pressCapture}
           onOpenBenchmark={() => openBenchmark('ours')}
         />
       )}

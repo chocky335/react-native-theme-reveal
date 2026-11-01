@@ -7,6 +7,8 @@ type NativeThemeReveal = {
   start(transition: Transition): Promise<void>
   cancel(): Promise<void>
   warmUp(): Promise<void>
+  capture(viewTag: number | undefined): Promise<boolean>
+  dropCapture(): Promise<void>
 }
 
 const native = requireNativeModule<NativeThemeReveal>('ThemeReveal')
@@ -16,4 +18,6 @@ export default {
   start: (transition: Transition): Promise<void> => native.start(transition),
   cancel: (): Promise<void> => native.cancel(),
   warmUp: (): Promise<void> => native.warmUp(),
+  capture: (viewTag?: number): Promise<boolean> => native.capture(viewTag),
+  dropCapture: (): Promise<void> => native.dropCapture(),
 }

@@ -1,5 +1,6 @@
 import { Modal, Platform, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { GestureResponderEvent } from 'react-native'
+import type { PressCapture } from 'react-native-theme-reveal'
 
 import { Button } from './Button'
 import { SWITCH_BUTTONS } from './switches'
@@ -21,6 +22,7 @@ type Props = {
   colors: Colors
   topInset: number
   onSwitch: (button: SwitchButton, event: GestureResponderEvent, view: View | null) => void
+  pressCapture: PressCapture
   onClose: () => void
 }
 
@@ -31,6 +33,7 @@ export function ModalScreen({
   colors,
   topInset,
   onSwitch,
+  pressCapture,
   onClose,
 }: Props) {
   const { probeRef, onShow } = useModalLinkProbe()
@@ -55,6 +58,8 @@ export function ModalScreen({
               label={button.label}
               colors={colors}
               onPress={(event, view) => onPress(button, event, view)}
+              onPressIn={pressCapture.onPressIn}
+              onPressOut={pressCapture.onPressOut}
             />
           </View>
         ))}

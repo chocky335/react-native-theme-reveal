@@ -16,7 +16,7 @@ import {
   View,
 } from 'react-native'
 import type { GestureResponderEvent } from 'react-native'
-import type { Point } from 'react-native-theme-reveal'
+import type { Point, PressCapture } from 'react-native-theme-reveal'
 
 import { Button } from './Button'
 import * as ours from './bench/ours'
@@ -31,6 +31,9 @@ type Library = {
   label: string
   Host: ComponentType<HostProps>
   run: (target: Theme, origin: Point) => Promise<RunResult>
+  // Run button's press-in and press-out, for a library that works on press-in. The run still starts on
+  // onPress, with the same t0 for every library.
+  press?: PressCapture
 }
 
 export const LIBRARIES = {
@@ -126,7 +129,7 @@ export function BenchmarkScreen({ library, autoRun, topInset, onSelect, onClose 
     },
     rootRef,
   }))
-  const { Host, run } = LIBRARIES[library]
+  const { Host, run, press }: Library = LIBRARIES[library]
   const colors = palette[theme]
 
   const reportReady = () => {
@@ -207,7 +210,13 @@ export function BenchmarkScreen({ library, autoRun, topInset, onSelect, onClose 
           </Pressable>
         </View>
         <View ref={runRef} collapsable={false} onLayout={reportReady}>
-          <Button label="Run" colors={colors} onPress={onRun} />
+          <Button
+            label="Run"
+            colors={colors}
+            onPress={onRun}
+            onPressIn={press?.onPressIn}
+            onPressOut={press?.onPressOut}
+          />
         </View>
         {ROWS.map((row) => (
           <View key={row} style={[styles.row, { backgroundColor: colors.card }]}>
