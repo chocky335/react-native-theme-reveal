@@ -122,14 +122,20 @@ internal object WindowSnapshot {
   ) {
     val api = Build.VERSION.SDK_INT
     if (api >= Build.VERSION_CODES.Q) {
+      val decors = windows.mapNotNull { it.peekDecorView() }
       val defaultColor = windows.all { it.colorMode == ActivityInfo.COLOR_MODE_DEFAULT }
-      val light = if (CapturePlan.path(api, defaultColor, gpuOff) == CapturePath.GPU) {
+      val accelerated = decors.all { it.isHardwareAccelerated }
+      // A decor is dirty while a view change waits for the window's next frame. Read it before the draw clears it.
+      val pending = decors.any { it.isDirty }
+      val forceDark = pending && GpuSnapshot.forceDarkCanApply(activity)
+      val light = if (CapturePlan.path(api, defaultColor, accelerated, forceDark, gpuOff) == CapturePath.GPU) {
         GpuSnapshot.lightOf(activity, decor)
       } else {
         null
       }
       if (light != null && decor.width > 0 && decor.height > 0) {
-        GpuSnapshot.capture(decor.width, decor.height, light, handler, copyHandler, draw) { bitmap, failure ->
+        val redraw = if (pending) decors else emptyList()
+        GpuSnapshot.capture(decor.width, decor.height, light, redraw, handler, copyHandler, draw) { bitmap, failure ->
           if (bitmap != null) {
             onResult(bitmap)
             return@capture

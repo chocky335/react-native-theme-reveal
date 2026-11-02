@@ -27,9 +27,29 @@ internal object CapturePlan {
   private const val SYNC_FAILED = HardwareRenderer.SYNC_LOST_SURFACE_REWARD_IF_FOUND or
     HardwareRenderer.SYNC_CONTEXT_IS_STOPPED or HardwareRenderer.SYNC_FRAME_DROPPED
 
-  // GPU capture renders in sRGB, so a wide color window stays on PixelCopy.
-  fun path(apiLevel: Int, defaultColorMode: Boolean, gpuOff: Boolean): CapturePath =
-    if (apiLevel >= Build.VERSION_CODES.Q && defaultColorMode && !gpuOff) CapturePath.GPU else CapturePath.PIXEL_COPY
+  // GPU capture renders in sRGB, so a wide color window stays on PixelCopy. So does a window without hardware
+  // acceleration, since its software canvas can't draw the hardware bitmap. Same for a view change waiting for its
+  // frame while force dark can apply: the capture would sync it first, without the force dark transform.
+  fun path(
+    apiLevel: Int,
+    defaultColorMode: Boolean,
+    hardwareAccelerated: Boolean,
+    pendingUnderForceDark: Boolean,
+    gpuOff: Boolean,
+  ): CapturePath =
+    if (apiLevel >= Build.VERSION_CODES.Q && defaultColorMode && hardwareAccelerated && !pendingUnderForceDark &&
+      !gpuOff
+    ) {
+      CapturePath.GPU
+    } else {
+      CapturePath.PIXEL_COPY
+    }
+
+  // ViewRootImpl turns on force dark for a light theme that allows it, in night mode. From API 36 the color
+  // inversion setting can darken a light theme too, and apps can't read that setting.
+  fun forceDarkCanApply(apiLevel: Int, nightMode: Boolean, lightTheme: Boolean, forceDarkAllowed: Boolean): Boolean =
+    apiLevel >= Build.VERSION_CODES.Q && nightMode && lightTheme &&
+      (forceDarkAllowed || apiLevel >= Build.VERSION_CODES.BAKLAVA)
 
   fun syncFailed(result: Int): Boolean = result and SYNC_FAILED != 0
 
@@ -59,13 +79,49 @@ internal object CapturePlan {
   }
 }
 
-// Image, timeout and failure race to end a GPU capture. Only the first one counts. Main thread only.
-internal class CaptureRace {
+// How a GPU capture ends: image, timeout or failure, whichever comes first. The rest get dropped and a late bitmap
+// is recycled. onResult runs once. release runs once, after onResult for an image and before it for a failure. Main
+// thread only.
+internal class CaptureEnd<B : Any>(
+  private val release: () -> Unit,
+  private val recycle: (B) -> Unit,
+  private val cancelTimeout: () -> Unit,
+  private val onResult: (B?, GpuFailure?) -> Unit,
+) {
   private var finished = false
 
-  fun finish(): Boolean {
-    if (finished) return false
+  fun image(bitmap: B?) {
+    if (finished) {
+      bitmap?.let(recycle)
+      return
+    }
     finished = true
-    return true
+    cancelTimeout()
+    if (bitmap == null) {
+      release()
+      onResult(null, GpuFailure.ERROR)
+      return
+    }
+    // Overlay goes up first, then the renderer goes away.
+    try {
+      onResult(bitmap, null)
+    } finally {
+      release()
+    }
+  }
+
+  fun timeout() {
+    if (finished) return
+    finished = true
+    release()
+    onResult(null, GpuFailure.TIMEOUT)
+  }
+
+  fun fail(failure: GpuFailure) {
+    if (finished) return
+    finished = true
+    cancelTimeout()
+    release()
+    onResult(null, failure)
   }
 }

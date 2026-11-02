@@ -1,6 +1,7 @@
 package expo.modules.themereveal
 
 import android.app.Activity
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ColorSpace
@@ -74,12 +75,25 @@ internal object GpuSnapshot {
     canvas.restoreToCount(count)
   }
 
+  // Force dark can darken this activity's windows (see CapturePlan.forceDarkCanApply).
+  fun forceDarkCanApply(activity: Activity): Boolean {
+    val value = TypedValue()
+    val theme = activity.theme
+    val lightTheme = !theme.resolveAttribute(android.R.attr.isLightTheme, value, true) || value.data != 0
+    val allowed = theme.resolveAttribute(android.R.attr.forceDarkAllowed, value, true) && value.data != 0
+    val night = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+      Configuration.UI_MODE_NIGHT_YES
+    return CapturePlan.forceDarkCanApply(Build.VERSION.SDK_INT, night, lightTheme, allowed)
+  }
+
   // Records draw on the UI thread, renders it into a hardware buffer and calls onResult once on handler, with the
   // bitmap or with null and the reason. readerHandler gets the image, since taking it waits for the GPU to finish.
+  // redraw lists the decor views of windows that had a view change waiting for its frame.
   fun capture(
     width: Int,
     height: Int,
     light: Lighting,
+    redraw: List<View>,
     handler: Handler,
     readerHandler: Handler,
     draw: (Canvas) -> Unit,
@@ -88,44 +102,19 @@ internal object GpuSnapshot {
     val node = RenderNode("ThemeRevealSnapshot")
     var reader: ImageReader? = null
     var renderer: HardwareRenderer? = null
-    val race = CaptureRace()
-    val release = {
-      renderer?.destroy()
-      reader?.close()
-      node.discardDisplayList()
-    }
-    val timeout = Runnable {
-      if (race.finish()) {
-        release()
-        onResult(null, GpuFailure.TIMEOUT)
-      }
-    }
-    val fail = { failure: GpuFailure ->
-      if (race.finish()) {
-        handler.removeCallbacks(timeout)
-        release()
-        onResult(null, failure)
-      }
-    }
-    // Main thread. A bitmap arriving after the timeout or a failure is dropped.
-    val deliver = { bitmap: Bitmap? ->
-      if (!race.finish()) {
-        bitmap?.recycle()
-      } else {
-        handler.removeCallbacks(timeout)
-        if (bitmap == null) {
-          release()
-          onResult(null, GpuFailure.ERROR)
-        } else {
-          // Overlay goes up first, then the renderer goes away.
-          try {
-            onResult(bitmap, null)
-          } finally {
-            release()
-          }
-        }
-      }
-    }
+    lateinit var timeout: Runnable
+    val end = CaptureEnd<Bitmap>(
+      release = {
+        renderer?.destroy()
+        // On the reader's own thread, so the close can't free an image the listener is still reading.
+        reader?.let { images -> readerHandler.post { images.close() } }
+        node.discardDisplayList()
+      },
+      recycle = { it.recycle() },
+      cancelTimeout = { handler.removeCallbacks(timeout) },
+      onResult = onResult,
+    )
+    timeout = Runnable { end.timeout() }
     try {
       node.setPosition(0, 0, width, height)
       val canvas = node.beginRecording(width, height)
@@ -151,7 +140,7 @@ internal object GpuSnapshot {
           null
         }
         // Front of the queue, like the PixelCopy listener, so the overlay can still make a frame that's due.
-        handler.postAtFrontOfQueue { deliver(bitmap) }
+        handler.postAtFrontOfQueue { end.image(bitmap) }
       }, readerHandler)
       val output = HardwareRenderer()
       renderer = output
@@ -160,12 +149,20 @@ internal object GpuSnapshot {
       output.setOpaque(false)
       output.setLightSourceGeometry(light.source.x, light.source.y, light.source.z, light.source.radius)
       output.setLightSourceAlpha(light.ambientAlpha, light.spotAlpha)
-      if (CapturePlan.syncFailed(output.createRenderRequest().syncAndDraw())) {
-        fail(GpuFailure.SYNC)
+      val result = output.createRenderRequest().syncAndDraw()
+      // The sync consumed the damage of views that changed since the window's last frame, so the window would skip
+      // redrawing them. Redraw these windows in full.
+      redraw.forEach { it.invalidate() }
+      if (CapturePlan.syncFailed(result)) {
+        end.fail(GpuFailure.SYNC)
         return
       }
     } catch (_: RuntimeException) {
-      fail(GpuFailure.ERROR)
+      end.fail(GpuFailure.ERROR)
+      return
+    } catch (_: OutOfMemoryError) {
+      // HardwareRenderer throws it when HWUI can't make its native proxy.
+      end.fail(GpuFailure.ERROR)
       return
     }
     handler.postDelayed(timeout, CapturePlan.GPU_TIMEOUT_MS)
