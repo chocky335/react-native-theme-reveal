@@ -131,8 +131,8 @@ class ThemeRevealModule : Module() {
     }
   }
 
-  // Off main: starts the copy thread. Then, on main, keeps a bitmap of the window's size. Failures go to the log
-  // and the promise.
+  // Off main: starts the copy thread. Then, on main, prepares the first switch's capture: GPU capture on API 29+,
+  // otherwise a kept bitmap of the window's size. Failures go to the log and the promise.
   private fun warmUp(promise: Promise) {
     val error = try {
       WindowSnapshot.warmUp()
@@ -146,8 +146,8 @@ class ThemeRevealModule : Module() {
       val activity = appContext.currentActivity
       // A JS reload hid the pool in the old module's OnDestroy. This warm-up comes from a mounted UI.
       if (activity != null && isResumed(activity)) WindowSnapshot.kept.show()
-      // Copy thread didn't start, so keepOne would fail the same way.
-      if (error == null) WindowSnapshot.keepOne(activity, mainHandler)
+      // Copy thread didn't start, so the first switch's path can't be prepared either.
+      if (error == null) WindowSnapshot.prepareFirst(activity, mainHandler)
       if (error == null) promise.resolve() else promise.reject("ERR_THEME_REVEAL_WARM_UP", error.message, error)
     }
   }
@@ -185,27 +185,31 @@ class ThemeRevealModule : Module() {
       if (!CaptureRules.keepResult(ticket, captureTicket, gen, generation, overlay != null) || activity.isFinishing ||
         activity.isDestroyed || !isResumed(activity) || !snapshot.host.isAttachedToWindow
       ) {
-        snapshot.bitmap.recycle()
+        WindowSnapshot.kept.give(snapshot.bitmap)
         debug("dropped a capture result: voided, another switch or no window")
         promise.resolve(false)
         return@capture
       }
-      // Upload during the press, so the overlay's first frame doesn't have to.
+      // Upload a PixelCopy bitmap during the press, so the overlay's first frame doesn't have to. A GPU snapshot is
+      // already on the GPU.
       snapshot.bitmap.prepareToDraw()
       held = HeldCapture(ticket, gen, activity, root, snapshot, SystemClock.uptimeMillis())
+      // HARDWARE: the GPU capture, ARGB_8888: PixelCopy.
+      debug("held a capture: ${snapshot.bitmap.config}")
       mainHandler.postDelayed(captureExpiry, CaptureRules.TIMEOUT_MS)
       promise.resolve(true)
     }
   }
 
-  // Frees the held capture and voids a running one no prepare took.
+  // Frees the held capture and voids a running one no prepare took. A PixelCopy bitmap goes back to the kept
+  // bitmaps, a GPU snapshot gets freed.
   private fun voidCapture(reason: String) {
     captureTicket++
     pendingCapture = null
     mainHandler.removeCallbacks(captureExpiry)
     val current = held ?: return
     held = null
-    current.snapshot.bitmap.recycle()
+    WindowSnapshot.kept.give(current.snapshot.bitmap)
     debug("freed the held capture: $reason")
   }
 
@@ -268,8 +272,20 @@ class ThemeRevealModule : Module() {
       voidCapture("switch attached")
       // JS applies the theme when this resolves, and that render blocks the JS thread. Resolve in the next frame's
       // callbacks, after React Native's timers for that frame, so the render starts after that frame's JS callbacks
-      // instead of holding them up. The overlay draws in that same frame.
-      Choreographer.getInstance().postFrameCallback { promise.resolve(true) }
+      // instead of holding them up. The overlay draws in that same frame. No frame comes while the screen is off,
+      // so a timeout also resolves, whichever fires first.
+      val resolve = Once { promise.resolve(true) }
+      lateinit var timeout: Runnable
+      val frame = Choreographer.FrameCallback {
+        mainHandler.removeCallbacks(timeout)
+        resolve.run()
+      }
+      timeout = Runnable {
+        Choreographer.getInstance().removeFrameCallback(frame)
+        resolve.run()
+      }
+      Choreographer.getInstance().postFrameCallback(frame)
+      mainHandler.postDelayed(timeout, RESOLVE_TIMEOUT_MS)
     }
     val kept = held
     if (kept != null && CaptureRules.usable(
@@ -404,6 +420,9 @@ class ThemeRevealModule : Module() {
 
   private companion object {
     const val FAILSAFE_MS = 1000L
+
+    // Longest prepare waits for the frame callback before resolving.
+    const val RESOLVE_TIMEOUT_MS = 100L
     const val TAG = "ThemeReveal"
   }
 }

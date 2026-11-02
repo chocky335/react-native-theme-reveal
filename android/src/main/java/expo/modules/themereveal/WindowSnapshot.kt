@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
+import android.util.Log
 import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
@@ -31,8 +32,11 @@ internal class Snapshot(
 )
 
 internal object WindowSnapshot {
-  // Activity-window bitmaps for the next capture. Main thread only.
-  val kept = KeptBitmaps<Bitmap>(1, { it.width }, { it.height }, { it.isRecycled }) { it.recycle() }
+  private const val TAG = "ThemeReveal"
+
+  // Activity-window bitmaps for the next PixelCopy capture. A GPU snapshot is a hardware bitmap, and those are
+  // immutable: PixelCopy can't copy into it, so it isn't kept. Main thread only.
+  val kept = KeptBitmaps<Bitmap>(1, { it.width }, { it.height }, { it.isRecycled }, { it.isMutable }) { it.recycle() }
 
   fun capture(activity: Activity, root: View?, handler: Handler, onResult: (Snapshot?) -> Unit) {
     val window = activity.window
@@ -106,8 +110,9 @@ internal object WindowSnapshot {
     }
   }
 
-  // Set when a GPU capture timed out or threw: from then on the process captures with PixelCopy.
-  private var gpuOff = false
+  // Set when a GPU capture timed out or threw: from then on the process captures with PixelCopy. Main thread only.
+  var gpuOff = false
+    private set
 
   // Snapshot of windows, decor-sized, drawn on the GPU on API 29+. Read back with PixelCopy on API 26-28, for a
   // wide color window, and when the GPU capture fails.
@@ -126,7 +131,8 @@ internal object WindowSnapshot {
       val defaultColor = windows.all { it.colorMode == ActivityInfo.COLOR_MODE_DEFAULT }
       val accelerated = decors.all { it.isHardwareAccelerated }
       // A decor is dirty while a view change waits for the window's next frame. Read it before the draw clears it.
-      val pending = decors.any { it.isDirty }
+      val dirty = decors.filter { it.isDirty }
+      val pending = dirty.isNotEmpty()
       val forceDark = pending && GpuSnapshot.forceDarkCanApply(activity)
       val light = if (CapturePlan.path(api, defaultColor, accelerated, forceDark, gpuOff) == CapturePath.GPU) {
         GpuSnapshot.lightOf(activity, decor)
@@ -134,8 +140,7 @@ internal object WindowSnapshot {
         null
       }
       if (light != null && decor.width > 0 && decor.height > 0) {
-        val redraw = if (pending) decors else emptyList()
-        GpuSnapshot.capture(decor.width, decor.height, light, redraw, handler, copyHandler, draw) { bitmap, failure ->
+        GpuSnapshot.capture(decor.width, decor.height, light, dirty, handler, copyHandler, draw) { bitmap, failure ->
           if (bitmap != null) {
             onResult(bitmap)
             return@capture
@@ -232,6 +237,26 @@ internal object WindowSnapshot {
   // Off main. Starts the copy thread so the first switch doesn't have to.
   fun warmUp() {
     copyHandler
+  }
+
+  // Main thread, after warmUp. Prepares the path the first switch takes: on API 29+, a GPU capture of nothing on
+  // the copy thread with no bitmap kept. Otherwise keepOne.
+  fun prepareFirst(activity: Activity?, handler: Handler) {
+    val api = Build.VERSION.SDK_INT
+    if (api < Build.VERSION_CODES.Q || CapturePlan.warmUp(api, gpuOff) == WarmUp.KEPT_BITMAP) {
+      keepOne(activity, handler)
+      return
+    }
+    copyHandler.post {
+      try {
+        GpuSnapshot.preCreate()
+      } catch (thrown: Exception) {
+        // Then the first switch pays for it.
+        Log.w(TAG, "Cannot prepare the GPU capture", thrown)
+      } catch (thrown: OutOfMemoryError) {
+        Log.w(TAG, "Cannot prepare the GPU capture", thrown)
+      }
+    }
   }
 
   // Main thread. If kept has room, allocates a bitmap of the activity window's size on the copy thread, copies the

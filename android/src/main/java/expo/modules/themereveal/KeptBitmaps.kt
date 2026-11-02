@@ -2,14 +2,16 @@ package expo.modules.themereveal
 
 import android.content.ComponentCallbacks2
 
-// Window-size bitmaps kept for the next capture so it doesn't have to allocate one. Only bitmaps that no overlay
-// shows live here: a capture takes one out, and it comes back when its overlay goes away. Main thread only. Generic
-// over the bitmap type so JVM tests can run it.
+// Window-size bitmaps kept for the next PixelCopy capture so it doesn't have to allocate one. Only bitmaps that no
+// overlay or held press-in capture shows live here: a capture takes one out, and it comes back when its overlay
+// goes away or its held capture is dropped. A bitmap PixelCopy can't copy into (a GPU snapshot) is freed when it
+// comes back. Main thread only. Generic over the bitmap type so JVM tests can run it.
 internal class KeptBitmaps<B : Any>(
   private val capacity: Int,
   private val widthOf: (B) -> Int,
   private val heightOf: (B) -> Int,
   private val isFreed: (B) -> Boolean,
+  private val reusable: (B) -> Boolean,
   private val free: (B) -> Unit,
 ) {
   // Off until a warm-up asks for a kept bitmap. While off, every returned bitmap is freed.
@@ -39,10 +41,11 @@ internal class KeptBitmaps<B : Any>(
     return kept.removeAt(index)
   }
 
-  // A bitmap whose overlay is gone. Kept if keep is on, it has the size last asked for and there's room.
+  // A bitmap whose overlay is gone. Kept if keep is on, it's reusable, it has the size last asked for and there's
+  // room.
   fun give(bitmap: B) {
     if (isFreed(bitmap)) return
-    if (keep && !hidden && kept.size < capacity && matches(bitmap) && kept.none { it === bitmap }) {
+    if (keep && !hidden && kept.size < capacity && reusable(bitmap) && matches(bitmap) && kept.none { it === bitmap }) {
       kept.add(bitmap)
     } else {
       free(bitmap)

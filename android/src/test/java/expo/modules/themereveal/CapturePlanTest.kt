@@ -73,6 +73,24 @@ class CapturePlanTest {
   }
 
   @Test
+  fun fromApi29TheWarmUpPreparesTheGpuCaptureAndKeepsNoBitmap() {
+    assertEquals(WarmUp.GPU, CapturePlan.warmUp(29, gpuOff = false))
+    assertEquals(WarmUp.GPU, CapturePlan.warmUp(37, gpuOff = false))
+  }
+
+  @Test
+  fun belowApi29TheWarmUpKeepsABitmapForPixelCopy() {
+    assertEquals(WarmUp.KEPT_BITMAP, CapturePlan.warmUp(26, gpuOff = false))
+    assertEquals(WarmUp.KEPT_BITMAP, CapturePlan.warmUp(28, gpuOff = false))
+  }
+
+  @Test
+  fun withTheGpuPathTurnedOffTheWarmUpKeepsABitmap() {
+    // A JS reload warms up again in the same process, after a GPU capture timed out or threw.
+    assertEquals(WarmUp.KEPT_BITMAP, CapturePlan.warmUp(33, gpuOff = true))
+  }
+
+  @Test
   fun theLightSitsAboveTheDisplayCenterInWindowSpace() {
     // Pixel 8 Pro: 1008 x 2244, density 2.25, theme lightY 0, lightZ 500dp, lightRadius 800dp.
     val light = CapturePlan.light(33, 1008, 2244, 2.25f, 0, 0, 0f, 1125f, 1800f)

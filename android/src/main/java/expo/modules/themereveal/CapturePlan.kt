@@ -18,6 +18,15 @@ internal enum class GpuFailure {
   ERROR,
 }
 
+// What a warm-up prepares for the first switch.
+internal enum class WarmUp {
+  // GPU capture's classes, reader and renderer. No bitmap kept, the GPU capture makes its own.
+  GPU,
+
+  // One window-size bitmap for PixelCopy, kept with one copy into it.
+  KEPT_BITMAP,
+}
+
 internal class LightSource(val x: Float, val y: Float, val z: Float, val radius: Float)
 
 internal object CapturePlan {
@@ -50,6 +59,10 @@ internal object CapturePlan {
   fun forceDarkCanApply(apiLevel: Int, nightMode: Boolean, lightTheme: Boolean, forceDarkAllowed: Boolean): Boolean =
     apiLevel >= Build.VERSION_CODES.Q && nightMode && lightTheme &&
       (forceDarkAllowed || apiLevel >= Build.VERSION_CODES.BAKLAVA)
+
+  // Warm-up prepares the path the first switch takes: GPU capture on API 29+, otherwise PixelCopy.
+  fun warmUp(apiLevel: Int, gpuOff: Boolean): WarmUp =
+    if (apiLevel >= Build.VERSION_CODES.Q && !gpuOff) WarmUp.GPU else WarmUp.KEPT_BITMAP
 
   fun syncFailed(result: Int): Boolean = result and SYNC_FAILED != 0
 

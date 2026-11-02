@@ -9,12 +9,40 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KeptBitmapsTest {
-  private class Fake(val width: Int, val height: Int) {
+  // hardware: a GPU snapshot, which PixelCopy can't copy into.
+  private class Fake(val width: Int, val height: Int, val hardware: Boolean = false) {
     var freed = false
   }
 
-  private fun pool(capacity: Int = 1) = KeptBitmaps<Fake>(capacity, { it.width }, { it.height }, { it.freed }) {
-    it.freed = true
+  private fun pool(capacity: Int = 1) =
+    KeptBitmaps<Fake>(capacity, { it.width }, { it.height }, { it.freed }, { !it.hardware }) {
+      it.freed = true
+    }
+
+  @Test
+  fun freesAGpuSnapshotThatComesBack() {
+    val pool = pool().apply { keep = true }
+    assertNull(pool.take(1080, 2400))
+    val gpu = Fake(1080, 2400, hardware = true)
+
+    pool.give(gpu)
+
+    assertTrue(gpu.freed)
+    assertEquals(0, pool.size)
+  }
+
+  @Test
+  fun aDroppedPressInCaptureServesTheNextSwitch() {
+    val pool = pool().apply { keep = true }
+    pool.fill(Fake(1080, 2400))
+    // The press-in capture holds it, so a switch that doesn't use it gets no bitmap.
+    val held = pool.take(1080, 2400)!!
+    assertNull(pool.take(1080, 2400))
+
+    pool.give(held)
+
+    assertFalse(held.freed)
+    assertSame(held, pool.take(1080, 2400))
   }
 
   @Test

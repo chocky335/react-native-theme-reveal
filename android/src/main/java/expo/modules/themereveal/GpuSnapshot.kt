@@ -24,6 +24,8 @@ internal class Lighting(val source: LightSource, val ambientAlpha: Float, val sp
 // GPU like PixelCopy needs.
 @RequiresApi(Build.VERSION_CODES.Q)
 internal object GpuSnapshot {
+  private const val USAGE = HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
+
   // Light the window's renderer uses for elevation shadows (ThreadedRenderer), or null if the theme doesn't define
   // it.
   fun lightOf(activity: Activity, decor: View): Lighting? {
@@ -75,6 +77,36 @@ internal object GpuSnapshot {
     canvas.restoreToCount(count)
   }
 
+  // Warm-up, off the main thread: a 1x1 capture with no window in it. Loads the reader's and renderer's classes and
+  // native code and draws one frame, so the first switch doesn't have to. Draws no view, so it can run off main.
+  fun preCreate() {
+    val node = RenderNode("ThemeRevealWarmUp")
+    val images = ImageReader.newInstance(1, 1, PixelFormat.RGBA_8888, 1, USAGE)
+    var renderer: HardwareRenderer? = null
+    try {
+      node.setPosition(0, 0, 1, 1)
+      node.beginRecording(1, 1)
+      node.endRecording()
+      val output = HardwareRenderer()
+      renderer = output
+      output.setSurface(images.surface)
+      output.setContentRoot(node)
+      output.setOpaque(false)
+      output.setLightSourceGeometry(0f, 0f, 1f, 1f)
+      output.setLightSourceAlpha(0f, 0f)
+      output.createRenderRequest().syncAndDraw()
+      // Waits until the frame is drawn.
+      output.stop()
+      images.acquireLatestImage()?.use { image ->
+        image.hardwareBuffer?.use { Bitmap.wrapHardwareBuffer(it, ColorSpace.get(ColorSpace.Named.SRGB))?.recycle() }
+      }
+    } finally {
+      renderer?.destroy()
+      images.close()
+      node.discardDisplayList()
+    }
+  }
+
   // Force dark can darken this activity's windows (see CapturePlan.forceDarkCanApply).
   fun forceDarkCanApply(activity: Activity): Boolean {
     val value = TypedValue()
@@ -123,13 +155,7 @@ internal object GpuSnapshot {
       } finally {
         node.endRecording()
       }
-      val images = ImageReader.newInstance(
-        width,
-        height,
-        PixelFormat.RGBA_8888,
-        1,
-        HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_GPU_COLOR_OUTPUT,
-      )
+      val images = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1, USAGE)
       reader = images
       images.setOnImageAvailableListener({ source ->
         val bitmap = try {
@@ -156,6 +182,16 @@ internal object GpuSnapshot {
       if (CapturePlan.syncFailed(result)) {
         end.fail(GpuFailure.SYNC)
         return
+      }
+      // A RenderThread animation in the window (a ripple, say) would make this renderer redraw the whole window
+      // every vsync until release. Stop it once its frame is drawn. stop() waits for that on the RenderThread, so
+      // it runs off the main thread. destroy() stays on main.
+      readerHandler.post {
+        try {
+          output.stop()
+        } catch (_: RuntimeException) {
+          // Nothing to stop.
+        }
       }
     } catch (_: RuntimeException) {
       end.fail(GpuFailure.ERROR)
