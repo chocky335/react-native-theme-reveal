@@ -18,11 +18,14 @@ const reveal = createThemeReveal<Theme>({
     host?.setTheme(theme)
   },
   durations: { reveal: DURATION_MS },
-  // transition is null when prepare showed no overlay.
-  onSettled: ({ transition }) => {
+  // transition and capture are null when prepare showed no overlay. capture: how the snapshot was taken.
+  onSettled: ({ transition, capture }) => {
     const done = pending
     pending = null
-    done?.resolve({ overlayMs: done.overlayMs, detail: `transition=${transition ?? 'null'}` })
+    done?.resolve({
+      overlayMs: done.overlayMs,
+      detail: `transition=${transition ?? 'null'} capture=${capture ?? 'null'}`,
+    })
   },
 })
 

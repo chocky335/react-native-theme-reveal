@@ -73,6 +73,13 @@ class CapturePlanTest {
   }
 
   @Test
+  fun jsNamesThePathAsTheCapturePathType() {
+    // src/types.ts CapturePath.
+    assertEquals("gpu", CapturePath.GPU.js)
+    assertEquals("pixelcopy", CapturePath.PIXEL_COPY.js)
+  }
+
+  @Test
   fun fromApi29TheWarmUpPreparesTheGpuCaptureAndKeepsNoBitmap() {
     assertEquals(WarmUp.GPU, CapturePlan.warmUp(29, gpuOff = false))
     assertEquals(WarmUp.GPU, CapturePlan.warmUp(37, gpuOff = false))

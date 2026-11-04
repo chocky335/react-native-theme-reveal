@@ -11,3 +11,7 @@ export type Transition =
   | { type: 'crossfade'; durationMs: number }
 
 export type TransitionType = Transition['type']
+
+// How the snapshot was taken. Android: 'gpu' (a GPU draw of the window, API 29+) or 'pixelcopy' (a readback).
+// iOS: 'view' (snapshotView).
+export type CapturePath = 'gpu' | 'pixelcopy' | 'view'

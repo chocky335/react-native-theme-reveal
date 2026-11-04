@@ -133,6 +133,9 @@ internal object WindowSnapshot {
       // A decor is dirty while a view change waits for the window's next frame. Read it before the draw clears it.
       val dirty = decors.filter { it.isDirty }
       val pending = dirty.isNotEmpty()
+      if (pending && Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(TAG, "a view change waits for its frame in ${dirty.size} window(s)")
+      }
       val forceDark = pending && GpuSnapshot.forceDarkCanApply(activity)
       val light = if (CapturePlan.path(api, defaultColor, accelerated, forceDark, gpuOff) == CapturePath.GPU) {
         GpuSnapshot.lightOf(activity, decor)
@@ -153,6 +156,14 @@ internal object WindowSnapshot {
     }
     pixelCopy(onResult)
   }
+
+  // The path that took a snapshot: a GPU capture gives a hardware bitmap.
+  fun pathOf(bitmap: Bitmap): CapturePath =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && bitmap.config == Bitmap.Config.HARDWARE) {
+      CapturePath.GPU
+    } else {
+      CapturePath.PIXEL_COPY
+    }
 
   // Focused window root: the activity decor view, or a React Native modal's decor view.
   fun focusedRoot(activity: Activity): View? {

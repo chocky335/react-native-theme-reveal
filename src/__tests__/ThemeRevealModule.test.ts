@@ -1,10 +1,10 @@
 import { requireNativeModule } from 'expo'
 
 import ThemeRevealModule from '../ThemeRevealModule'
-import type { Transition } from '../types'
+import type { CapturePath, Transition } from '../types'
 
 type NativeMock = {
-  prepare: jest.Mock<Promise<boolean>, [number | undefined]>
+  prepare: jest.Mock<Promise<CapturePath | null>, [number | undefined]>
   start: jest.Mock<Promise<void>, [Transition]>
   cancel: jest.Mock<Promise<void>, []>
   warmUp: jest.Mock<Promise<void>, []>
@@ -15,7 +15,7 @@ type NativeMock = {
 jest.mock('expo', () => {
   const actual = jest.requireActual<typeof import('expo')>('expo')
   const native = {
-    prepare: jest.fn(() => Promise.resolve(true)),
+    prepare: jest.fn(() => Promise.resolve('gpu')),
     start: jest.fn(() => Promise.resolve()),
     cancel: jest.fn(() => Promise.resolve()),
     warmUp: jest.fn(() => Promise.resolve()),
@@ -32,8 +32,8 @@ jest.mock('expo', () => {
 const native = requireNativeModule<NativeMock>('ThemeReveal')
 
 describe('ThemeRevealModule', () => {
-  it('passes the view tag to native prepare', async () => {
-    await expect(ThemeRevealModule.prepare(7)).resolves.toBe(true)
+  it('passes the view tag to native prepare and resolves its capture path', async () => {
+    await expect(ThemeRevealModule.prepare(7)).resolves.toBe('gpu')
     expect(native.prepare).toHaveBeenCalledTimes(1)
     expect(native.prepare).toHaveBeenCalledWith(7)
   })

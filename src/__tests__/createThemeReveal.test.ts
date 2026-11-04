@@ -4,6 +4,7 @@ import type { GestureResponderEvent } from 'react-native'
 
 import ThemeRevealModule from '../ThemeRevealModule'
 import { createThemeReveal, type ThemeRevealOptions } from '../createThemeReveal'
+import type { CapturePath } from '../types'
 
 jest.mock('../ThemeRevealModule', () => ({
   __esModule: true,
@@ -64,7 +65,7 @@ const deferStart = () => {
 }
 
 beforeEach(() => {
-  prepare.mockReset().mockResolvedValue(true)
+  prepare.mockReset().mockResolvedValue('gpu')
   start.mockReset().mockResolvedValue(undefined)
   cancel.mockReset().mockResolvedValue(undefined)
   warmUp.mockReset().mockResolvedValue(undefined)
@@ -130,8 +131,8 @@ describe('switchTo', () => {
     expect(start).toHaveBeenCalledWith({ type: 'crossfade', durationMs: 300 })
   })
 
-  it('switches without animation when prepare returns false', async () => {
-    prepare.mockResolvedValue(false)
+  it('switches without animation when prepare returns null', async () => {
+    prepare.mockResolvedValue(null)
     const { reveal, getTheme, onError, mount } = setup()
     const view = mount()
 
@@ -170,9 +171,9 @@ describe('switchTo', () => {
   })
 
   it('lets the newest switch win', async () => {
-    let resolveFirst: (shown: boolean) => void = () => {}
+    let resolveFirst: (capture: CapturePath | null) => void = () => {}
     prepare.mockReturnValueOnce(
-      new Promise<boolean>((resolve) => {
+      new Promise<CapturePath | null>((resolve) => {
         resolveFirst = resolve
       }),
     )
@@ -183,7 +184,7 @@ describe('switchTo', () => {
     reveal.setOrigin({ x: 1, y: 2 })
     await act(() => reveal.switchTo(dim))
     await act(async () => {
-      resolveFirst(true)
+      resolveFirst('gpu')
       await first
     })
 
@@ -207,9 +208,9 @@ describe('switchTo', () => {
   })
 
   it('drops an older switch when a same-theme switch comes during its prepare', async () => {
-    let resolveFirst: (shown: boolean) => void = () => {}
+    let resolveFirst: (capture: CapturePath | null) => void = () => {}
     prepare.mockReturnValueOnce(
-      new Promise<boolean>((resolve) => {
+      new Promise<CapturePath | null>((resolve) => {
         resolveFirst = resolve
       }),
     )
@@ -222,7 +223,7 @@ describe('switchTo', () => {
     expect(cancel).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      resolveFirst(true)
+      resolveFirst('gpu')
       await first
     })
 
@@ -232,7 +233,7 @@ describe('switchTo', () => {
     expect(view.result.current).toBeNull()
   })
 
-  it('applies the theme at once when prepare returns false during a running animation', async () => {
+  it('applies the theme at once when prepare returns null during a running animation', async () => {
     const finish = deferStart()
     const onSettled = jest.fn()
     const { reveal, getTheme, mount } = setup({ onSettled })
@@ -243,7 +244,7 @@ describe('switchTo', () => {
     expect(start).toHaveBeenCalledTimes(1)
     expect(view.result.current).toBe(light)
 
-    prepare.mockResolvedValueOnce(false)
+    prepare.mockResolvedValueOnce(null)
     await act(() => reveal.switchTo(light))
 
     expect(getTheme()).toBe(light)
@@ -524,7 +525,7 @@ describe('failure paths', () => {
   it('resolves the switch when onSettled throws after a switch with no snapshot', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
     const thrown = new Error('onSettled failed')
-    prepare.mockResolvedValue(false)
+    prepare.mockResolvedValue(null)
     const { reveal, getTheme } = setup({
       onSettled: () => {
         throw thrown
@@ -580,7 +581,7 @@ describe('failure paths', () => {
 
   it('rejects with the setTheme error when there was no snapshot', async () => {
     const thrown = new Error('setTheme failed')
-    prepare.mockResolvedValue(false)
+    prepare.mockResolvedValue(null)
     const onSettled = jest.fn()
     const { reveal } = setup({
       setTheme: () => {
@@ -602,7 +603,7 @@ describe('onSettled', () => {
     jest.spyOn(performance, 'now').mockImplementation(() => now)
     prepare.mockImplementation(async () => {
       now = 130
-      return true
+      return 'pixelcopy'
     })
     const finish = deferStart()
     const onSettled = jest.fn()
@@ -617,7 +618,12 @@ describe('onSettled', () => {
     await finish()
 
     expect(onSettled).toHaveBeenCalledTimes(1)
-    expect(onSettled).toHaveBeenCalledWith({ transition: 'crossfade', prepareMs: 30, totalMs: 500 })
+    expect(onSettled).toHaveBeenCalledWith({
+      transition: 'crossfade',
+      capture: 'pixelcopy',
+      prepareMs: 30,
+      totalMs: 500,
+    })
   })
 
   it('reports onSettled right after setTheme when there was no snapshot', async () => {
@@ -625,7 +631,7 @@ describe('onSettled', () => {
     jest.spyOn(performance, 'now').mockImplementation(() => now)
     prepare.mockImplementation(async () => {
       now = 120
-      return false
+      return null
     })
     const onSettled = jest.fn()
     const { reveal } = setup({ onSettled })
@@ -633,7 +639,7 @@ describe('onSettled', () => {
     await reveal.switchTo(dark)
 
     expect(onSettled).toHaveBeenCalledTimes(1)
-    expect(onSettled).toHaveBeenCalledWith({ transition: null, prepareMs: 20, totalMs: 20 })
+    expect(onSettled).toHaveBeenCalledWith({ transition: null, capture: null, prepareMs: 20, totalMs: 20 })
   })
 })
 

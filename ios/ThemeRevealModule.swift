@@ -45,7 +45,8 @@ public class ThemeRevealModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ThemeReveal")
 
-    AsyncFunction("prepare") { (viewTag: Int?) -> Bool in
+    // The capture path ("view": snapshotView), or nil when no overlay shows.
+    AsyncFunction("prepare") { (viewTag: Int?) -> String? in
       self.prepare(viewTag)
     }.runOnQueue(.main)
 
@@ -117,7 +118,7 @@ public class ThemeRevealModule: Module {
     held = nil
   }
 
-  private func prepare(_ viewTag: Int?) -> Bool {
+  private func prepare(_ viewTag: Int?) -> String? {
     removeOverlay()
     let kept = held
     dropCapture()
@@ -125,7 +126,7 @@ public class ThemeRevealModule: Module {
     guard Motion.canAnimate(active: active, reduceMotion: UIAccessibility.isReduceMotionEnabled),
           let window = Self.keyWindow(),
           let next = Self.overlay(on: window, kept: kept) else {
-      return false
+      return nil
     }
     overlay = next
     originOffset = viewTag.flatMap { findView($0) }.flatMap(Self.reactRoot(of:)).flatMap { root in
@@ -134,7 +135,7 @@ public class ThemeRevealModule: Module {
     let item = DispatchWorkItem { [weak self] in self?.removeOverlay() }
     failsafe = item
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.failsafeSeconds, execute: item)
-    return true
+    return "view"
   }
 
   private func start(_ transition: TransitionRecord, _ promise: Promise) {

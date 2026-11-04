@@ -5,10 +5,12 @@ import ThemeRevealModule from './ThemeRevealModule'
 import { pagePointOf } from './originFromPress'
 import { resolveTransition } from './resolveTransition'
 import { createStore, useStore } from './store'
-import type { Point, Shape, Transition, TransitionType, WipeDirection } from './types'
+import type { CapturePath, Point, Shape, Transition, TransitionType, WipeDirection } from './types'
 
 export type SettledInfo = {
   transition: TransitionType | null
+  // How the snapshot was taken, or null when there was none.
+  capture: CapturePath | null
   prepareMs: number
   totalMs: number
 }
@@ -53,6 +55,7 @@ export type ThemeReveal<T> = {
 type PendingStart = {
   id: number
   transition: Transition
+  capture: CapturePath
   startedAt: number
   prepareMs: number
 }
@@ -183,18 +186,18 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
       return
     }
 
-    let shown = false
+    let capture: CapturePath | null = null
     try {
-      shown = await ThemeRevealModule.prepare(origin?.viewTag)
+      capture = await ThemeRevealModule.prepare(origin?.viewTag)
     } catch (error) {
       onError(error)
     }
     if (id !== latestId) return
     const prepareMs = performance.now() - startedAt
 
-    if (!shown) {
+    if (!capture) {
       setTheme(theme)
-      onSettled({ transition: null, prepareMs, totalMs: performance.now() - startedAt })
+      onSettled({ transition: null, capture: null, prepareMs, totalMs: performance.now() - startedAt })
       return
     }
 
@@ -216,7 +219,7 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
       ThemeRevealModule.cancel().catch(onError)
       throw error
     }
-    store.set({ pending: { id, transition, startedAt, prepareMs } })
+    store.set({ pending: { id, transition, capture, startedAt, prepareMs } })
   }
 
   // Once per instance: start the native capture path early so the first switch doesn't pay for it.
@@ -238,12 +241,17 @@ export function createThemeReveal<T>(options: ThemeRevealOptions<T>): ThemeRevea
     useLayoutEffect(() => {
       if (!pending || store.get().pending !== pending) return
       store.set({ pending: null })
-      const { id, transition, startedAt, prepareMs } = pending
+      const { id, transition, capture, startedAt, prepareMs } = pending
       ThemeRevealModule.start(transition)
         .catch(onError)
         .finally(() => {
           if (store.get().held?.id === id) store.set({ held: null })
-          onSettled({ transition: transition.type, prepareMs, totalMs: performance.now() - startedAt })
+          onSettled({
+            transition: transition.type,
+            capture,
+            prepareMs,
+            totalMs: performance.now() - startedAt,
+          })
         })
     }, [pending])
   }

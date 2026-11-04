@@ -4,7 +4,11 @@ import android.graphics.HardwareRenderer
 import android.os.Build
 import kotlin.math.min
 
-internal enum class CapturePath { GPU, PIXEL_COPY }
+// js: name JS sees for it (src/types.ts CapturePath).
+internal enum class CapturePath(val js: String) {
+  GPU("gpu"),
+  PIXEL_COPY("pixelcopy"),
+}
 
 // Why a GPU capture gave no bitmap.
 internal enum class GpuFailure {

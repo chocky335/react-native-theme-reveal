@@ -1,9 +1,10 @@
 import { requireNativeModule } from 'expo'
 
-import type { Transition } from './types'
+import type { CapturePath, Transition } from './types'
 
 type NativeThemeReveal = {
-  prepare(viewTag: number | undefined): Promise<boolean>
+  // The capture path, or null when no overlay shows.
+  prepare(viewTag: number | undefined): Promise<CapturePath | null>
   start(transition: Transition): Promise<void>
   cancel(): Promise<void>
   warmUp(): Promise<void>
@@ -14,7 +15,7 @@ type NativeThemeReveal = {
 const native = requireNativeModule<NativeThemeReveal>('ThemeReveal')
 
 export default {
-  prepare: (viewTag?: number): Promise<boolean> => native.prepare(viewTag),
+  prepare: (viewTag?: number): Promise<CapturePath | null> => native.prepare(viewTag),
   start: (transition: Transition): Promise<void> => native.start(transition),
   cancel: (): Promise<void> => native.cancel(),
   warmUp: (): Promise<void> => native.warmUp(),

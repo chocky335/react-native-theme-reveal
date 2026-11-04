@@ -42,9 +42,12 @@ Every run logs a single line via `console.error` (which reaches logcat in releas
 
 ```
 BENCH lib=<id> snapshotMs=<n> jsMaxGapMs=<n> totalMs=<n> durationMs=450 pressAt=<n> t0=<event|onPress>
-      overlayAt=<n> endAt=<n> target=<theme> <transition=<type>|overlay=<0|1>>
+      overlayAt=<n> endAt=<n> target=<theme> <transition=<type> capture=<path>|overlay=<0|1>>
 BENCH lib=<id> pressAt=<n> t0=<event|onPress> error=<message>
 ```
+
+`capture` (`ours` only) is how the package took the snapshot: `gpu` (GPU draw, Android 10+), `pixelcopy`
+(readback) or `view` (iOS `snapshotView`). It's `null` when no overlay showed, and the run JSON keeps it.
 
 Clock: `pressAt`, `overlayAt` and `endAt` are absolute times in ms.
 - `pressAt` is the touch event's `nativeEvent.timestamp` (`t0=event`). On Android that's

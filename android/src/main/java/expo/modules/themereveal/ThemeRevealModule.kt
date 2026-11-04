@@ -194,8 +194,7 @@ class ThemeRevealModule : Module() {
       // already on the GPU.
       snapshot.bitmap.prepareToDraw()
       held = HeldCapture(ticket, gen, activity, root, snapshot, SystemClock.uptimeMillis())
-      // HARDWARE: the GPU capture, ARGB_8888: PixelCopy.
-      debug("held a capture: ${snapshot.bitmap.config}")
+      debug("held a capture: ${WindowSnapshot.pathOf(snapshot.bitmap).js}")
       mainHandler.postDelayed(captureExpiry, CaptureRules.TIMEOUT_MS)
       promise.resolve(true)
     }
@@ -229,7 +228,7 @@ class ThemeRevealModule : Module() {
       !Motion.canAnimate(Build.VERSION.SDK_INT, isResumed(activity))
     ) {
       voidCapture("no window")
-      promise.resolve(false)
+      promise.resolve(null)
       return
     }
     val root = rootOf(activity, viewTag)
@@ -239,7 +238,7 @@ class ThemeRevealModule : Module() {
     // during its copy shows the screen from before. A newer prepare (ticket != generation) handles its own.
     fun fail() {
       if (ticket == generation) voidCapture("switch failed")
-      promise.resolve(false)
+      promise.resolve(null)
     }
     fun attach(snapshot: Snapshot?) {
       if (snapshot == null) {
@@ -274,7 +273,8 @@ class ThemeRevealModule : Module() {
       // callbacks, after React Native's timers for that frame, so the render starts after that frame's JS callbacks
       // instead of holding them up. The overlay draws in that same frame. No frame comes while the screen is off,
       // so a timeout also resolves, whichever fires first.
-      val resolve = Once { promise.resolve(true) }
+      val path = WindowSnapshot.pathOf(bitmap).js
+      val resolve = Once { promise.resolve(path) }
       lateinit var timeout: Runnable
       val frame = Choreographer.FrameCallback {
         mainHandler.removeCallbacks(timeout)

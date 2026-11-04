@@ -3,8 +3,8 @@ import ThemeRevealModule from '../ThemeRevealModule'
 import { createThemeReveal } from '../createThemeReveal'
 
 describe('jest-expo native module mock', () => {
-  it('resolves prepare to false and start, cancel and warmUp to undefined', async () => {
-    await expect(ThemeRevealModule.prepare(1)).resolves.toBe(false)
+  it('resolves prepare to null and start, cancel and warmUp to undefined', async () => {
+    await expect(ThemeRevealModule.prepare(1)).resolves.toBeNull()
     await expect(ThemeRevealModule.warmUp()).resolves.toBeUndefined()
     await expect(ThemeRevealModule.start({ type: 'crossfade', durationMs: 300 })).resolves.toBeUndefined()
     await expect(ThemeRevealModule.cancel()).resolves.toBeUndefined()

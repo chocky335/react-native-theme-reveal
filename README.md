@@ -125,8 +125,14 @@ the press starts instead, so the snapshot is ready by the release and the animat
   can free the snapshot first, and the switch takes a new one at release as if you weren't using `pressCapture`.
   `await originFromPress(event)` is fine when the event has a touch point.
 - The press-in point becomes the origin for the next switch, like `setOrigin`. A later `setOrigin` call wins.
-- Every press-in costs a full-window copy (about 10 MB, and 25-47 ms of GPU readback on a low-end Android phone),
-  even when the touch turns into a scroll. Don't use `pressCapture` on buttons inside a scrolling list.
+- Every press-in costs a full-window snapshot, even when the touch turns into a scroll, so don't use
+  `pressCapture` on buttons inside a scrolling list. On Android the press-in snapshot takes the same path as a
+  snapshot at release (see [How it works on Android](#how-it-works-on-android)):
+  - API 29 and up, the GPU snapshot: a window-size hardware buffer (about 10 MB of GPU memory at 1080 x 2400) for
+    as long as the snapshot is held, and 2-8 ms on the main thread. It's ready 10-30 ms after the press on a Mi 11
+    Lite and a Pixel 8 Pro.
+  - API 26 to 28, `PixelCopy`: a window-size bitmap (about 10 MB) and 25-47 ms of GPU readback on a Mi 11 Lite.
+    The bitmap is the one the warm-up keeps, and it goes back there if no switch uses the snapshot.
 
 The catch is that the snapshot shows the screen at press-in, not at release. In pixels, that means:
 - The button shows up the way it looked just before the press, with no press feedback. React Native draws the
@@ -138,10 +144,11 @@ The catch is that the snapshot shows the screen at press-in, not at release. In 
   The snapshot is one press old.
 
 I checked this on a Mi 11 Lite and a Pixel 8 Pro with a button that has a pressed background colour and
-`android_ripple`. The first overlay frame matched the idle button with `pressCapture` and the pressed button
-without it, and outside the reveal hole the press-in snapshot matched the screen at press-in pixel for pixel. iOS
-takes its snapshot the same way (`afterScreenUpdates: false`), but I couldn't check the look there because the
-simulator can't hold a press.
+`android_ripple`, using both the `PixelCopy` snapshot and the GPU snapshot. The first overlay frame matched the idle
+button with `pressCapture` and the pressed button without it, and outside the reveal hole the press-in snapshot
+matched the screen at press-in pixel for pixel. The screen stays live during the hold: with a 300 ms hold, the
+pressed colour and the ripple stayed visible until the release on both phones. iOS takes its snapshot the same way
+(`afterScreenUpdates: false`), but I couldn't check the look there because the simulator can't hold a press.
 
 If you need the exact release frame, skip `pressCapture`.
 
@@ -209,8 +216,8 @@ Create one instance per app, at module scope (outside render).
 | `wipeDirection` | `'up' \| 'down' \| 'left' \| 'right'` | `'up'` | Default direction for `wipe`. |
 | `durations` | `Partial<Record<TransitionType, number>>` | 450 / 450 / 400 / 300 ms | Per transition type, in ms. Anything non-finite, 0 or below, or over 10 000 falls back to the default. |
 | `onError` | `(error: unknown) => void` | `console.warn` | Receives native errors. The theme still applies if the snapshot fails. |
-| `onSettled` | `(info: SettledInfo) => void` | none | Called when a switch finishes, with `{ transition, prepareMs, totalMs }`. |
-| `warmUp` | `boolean` | `true` | Prepares the native snapshot path when `useStart` mounts. On Android that means keeping one window-size bitmap. See [Warm-up](#warm-up). |
+| `onSettled` | `(info: SettledInfo) => void` | none | Called when a switch finishes, with `{ transition, capture, prepareMs, totalMs }`. |
+| `warmUp` | `boolean` | `true` | Prepares the native snapshot path when `useStart` mounts. On Android 10 and up that's the GPU snapshot, below that it keeps one window-size bitmap. See [Warm-up](#warm-up). |
 
 - `setTheme` has to update what React renders in the same tick. Don't `await` anything before the update and don't
   wrap it in `startTransition`. If the update is deferred, the animation runs over the old theme and the new one
@@ -220,6 +227,9 @@ Create one instance per app, at module scope (outside render).
 - In `onSettled`, `transition` is `null` when no snapshot was taken (the theme switched without animating). If a
   snapshot was taken, `transition` is the type, even when native ended up showing no animation (say, Android's
   animator duration scale is 0).
+- `capture` says how the snapshot was taken: `'gpu'` (Android 10 and up, see
+  [How it works on Android](#how-it-works-on-android)), `'pixelcopy'` (Android readback) or `'view'` (iOS
+  `snapshotView`). It's `null` when no snapshot was taken.
 - If starting the animation fails, `onError` runs first, then `onSettled`.
 - Same-theme calls get no `onSettled`. A call that a newer call replaced before its snapshot was taken gets no
   `onSettled` either, but one replaced mid-animation still does.
@@ -311,7 +321,8 @@ internally, and it's exported for tests and custom flows.
 ### `ThemeRevealModule`
 
 The native module, with `prepare(viewTag?)`, `start(transition)`, `cancel()`, `warmUp()`, `capture(viewTag?)` and
-`dropCapture()`. `createThemeReveal` calls it for you, so normally you won't need it.
+`dropCapture()`. `createThemeReveal` calls it for you, so normally you won't need it. `prepare` resolves to the
+`CapturePath`, or `null` when it shows no snapshot.
 
 ### Types
 
@@ -325,7 +336,13 @@ type Transition =
   | { type: 'wipe'; direction: WipeDirection; durationMs: number }
   | { type: 'crossfade'; durationMs: number }
 type TransitionType = Transition['type']
-type SettledInfo = { transition: TransitionType | null; prepareMs: number; totalMs: number }
+type CapturePath = 'gpu' | 'pixelcopy' | 'view'
+type SettledInfo = {
+  transition: TransitionType | null
+  capture: CapturePath | null
+  prepareMs: number
+  totalMs: number
+}
 type SwitchOptions = { transition?: TransitionType; shape?: Shape; wipeDirection?: WipeDirection }
 type PressOrigin = { point: Point; viewTag?: number }
 type PressCapture = { onPressIn(event: GestureResponderEvent): void; onPressOut(event?: GestureResponderEvent): void }
@@ -405,10 +422,17 @@ differently. You can't see it.
 
 The GPU snapshot has a few other quirks:
 - A view that changed since the window's last frame draws again first, so the snapshot can show the change one
-  frame before the screen does. The window then redraws in full.
+  frame before the screen does. Any window with such a change then redraws in full, so the change can't go
+  missing on screen. That's true during a press-in hold too.
 - The TalkBack focus rectangle isn't in it, because the window draws that rectangle outside its views.
 - A screenshot that draws the window into a software canvas (`View.draw`) while the overlay is up leaves the
   overlay out, because a software canvas can't draw a hardware bitmap.
+
+The `PixelCopy` snapshot matches the screen exactly for the activity window. Under a transparent modal's dim on a
+Pixel 8 Pro, 186 single pixels at text edges were off by up to 2%, from the CPU blend of the dim and the dialog.
+The press-in snapshot has its own difference, see [Snapshot on press-in](#snapshot-on-press-in).
+
+Each switch reports which path it took in `onSettled`, as `capture`: `'gpu'` or `'pixelcopy'`.
 
 ## Modals
 
@@ -433,27 +457,40 @@ A switch from inside a React Native `<Modal>` animates too.
 
 The first switch in a process used to pay for work that later switches skip. To move that out of the way, with
 `warmUp: true` (the default) `useStart()` calls the native `warmUp` once per instance, the first time it mounts.
-On Android the warm-up starts the thread that copies the snapshot and allocates one bitmap the size of the window,
-both off the main thread. Then it copies the window into that bitmap once and keeps it. The first copy into a
-fresh bitmap is the slow one, so this way the first switch gets a fast copy.
+On Android the warm-up starts the snapshot copy thread, off the main thread, and then prepares whichever path the
+first switch will take (see [How it works on Android](#how-it-works-on-android)).
 
-After that every snapshot copies into the kept bitmap and gets it back when the snapshot goes away. Inside a modal,
-the copy of the dialog window still allocates a new bitmap each time.
+On API 29 and up (the GPU snapshot), the warm-up makes a 1 x 1 GPU snapshot of nothing on the copy thread: an
+`ImageReader`, a `HardwareRenderer` and one drawn frame, which it then frees. It draws no view, so the window isn't
+touched, and it keeps no bitmap, because each GPU snapshot makes its own hardware buffer and frees it with the
+snapshot.
+- What it gains, on the first switch in a fresh process (3 runs each): on a Pixel 8 Pro (API 37) the main thread
+  spent 18.2-19.0 ms on the snapshot without the warm-up and 2.9-5.7 ms with it, and the first `ImageReader` in the
+  process accounted for 13.4-14.7 ms of that. The snapshot was ready 23.8-28.2 ms after the switch started without
+  the warm-up and 10.3-12.9 ms with it. On a Mi 11 Lite (API 33) the first snapshot was already fast (3.9-7.1 ms
+  on the main thread), and I couldn't measure any change from the warm-up.
+- What it costs: 30-44 ms on the copy thread at mount on the Pixel 8 Pro and 4 ms on the Mi 11 Lite, partly on the
+  RenderThread. No memory stays in use.
 
-What it costs:
-- Memory: one ARGB bitmap the size of the window, held while the app runs. At 4 bytes per pixel that's about
-  10 MB at 1080x2400. GPU memory didn't grow: on a Pixel 8 Pro, `dumpsys meminfo` showed 100 MB of Graphics with
-  and without the kept bitmap (one switch, then 5 s), so no extra texture of it stays cached. I haven't measured
-  other GPUs.
-- Time: the one copy at mount takes the RenderThread for 16-26 ms on a Mi 11 Lite and 39-60 ms on a Pixel 8 Pro.
-  If your app animates in its first frames, one of them can come late.
+On API 26 to 28 (`PixelCopy`), and in a process where the GPU snapshot switched itself off before the warm-up ran,
+the warm-up allocates one bitmap the size of the window on the copy thread. Then it copies the window into that
+bitmap once and keeps it. The first copy into a fresh bitmap is the slow one, so this way the first switch gets a
+fast copy.
+- Every `PixelCopy` snapshot copies into the kept bitmap and gets it back when the snapshot goes away, and so does
+  a press-in snapshot that no switch used. Inside a modal, the copy of the dialog window still allocates a new
+  bitmap each time.
+- What it costs: one ARGB bitmap the size of the window, held while the app runs. At 4 bytes per pixel that's
+  about 10 MB at 1080x2400. The one copy at mount takes the RenderThread once, for 16-26 ms on a Mi 11 Lite and
+  39-60 ms on a Pixel 8 Pro (measured before those phones moved to the GPU snapshot). If your app animates in its
+  first frames, one of them can come late. GPU memory didn't grow: on a Pixel 8 Pro, `dumpsys meminfo` showed
+  100 MB of Graphics with and without the kept bitmap. I haven't measured other GPUs.
+- The bitmap is freed when the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or above),
+  on low memory, when the screen size changes and when the activity is destroyed. Nothing is kept while the app is
+  in the background, and the next switch keeps a new bitmap.
 
-The bitmap is freed when the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or above), on
-low memory, when the screen size changes and when the activity is destroyed. Nothing is kept while the app is in
-the background, and the next switch keeps a new bitmap.
-
-If you have several instances, the bitmap stays as long as any of them has `warmUp: true`. With `warmUp: false`
-there's no warm-up at all (no thread start, no copy, no kept bitmap) and every snapshot allocates its own bitmap.
+If you have several instances, the warm-up runs as long as any of them has `warmUp: true`. With `warmUp: false`
+there's no warm-up at all (no thread start, no GPU snapshot of nothing, no copy, no kept bitmap), and every
+snapshot allocates its own bitmap.
 
 On iOS `warmUp` does nothing, since the snapshot there has no thread or bitmap to prepare. If the warm-up fails,
 the error goes to `onError` and switches keep working.

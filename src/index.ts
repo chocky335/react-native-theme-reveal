@@ -11,4 +11,4 @@ export type {
   ThemeReveal,
   ThemeRevealOptions,
 } from './createThemeReveal'
-export type { Point, Shape, Transition, TransitionType, WipeDirection } from './types'
+export type { CapturePath, Point, Shape, Transition, TransitionType, WipeDirection } from './types'
