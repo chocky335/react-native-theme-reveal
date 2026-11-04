@@ -19,8 +19,8 @@ import android.view.WindowManager
 import com.facebook.react.uimanager.RootView
 import com.facebook.react.views.modal.ReactModalHostView
 
-// Overlay goes into host at (hostX, hostY), bitmap-sized. The bitmap covers cover (the activity decor view), whose
-// top-left corner is at (screenX, screenY) on screen.
+// Overlay goes into host's overlay at (hostX, hostY), bitmap-sized. The bitmap covers cover (the activity decor
+// view), whose top-left corner is at (screenX, screenY) on screen.
 internal class Snapshot(
   val bitmap: Bitmap,
   val host: ViewGroup,
@@ -232,7 +232,7 @@ internal object WindowSnapshot {
     // locks internally), mWindowAttributes.surfaceInsets and mWidth/mHeight. A stale read means either a failed copy
     // (invalid surface throws, caught below, or the listener gets an error) or a size mismatch (Motion.sameSize in
     // start drops the overlay), and both go down the existing failure path. postAtFrontOfQueue jumps the main queue
-    // with one short message per copy (two for a modal). The last one does a single addView and resolve.
+    // with one short message per copy (two for a modal). The last one attaches the overlay and resolves.
     copyHandler.post {
       try {
         PixelCopy.request(window, bitmap, toFront, copyHandler)

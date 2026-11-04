@@ -12,10 +12,8 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import expo.modules.kotlin.Promise
@@ -258,11 +256,11 @@ class ThemeRevealModule : Module() {
       // already on the GPU.
       bitmap.prepareToDraw()
       val view = RevealOverlayView(activity, bitmap)
-      val params = FrameLayout.LayoutParams(bitmap.width, bitmap.height, Gravity.TOP or Gravity.LEFT).apply {
-        leftMargin = snapshot.hostX
-        topMargin = snapshot.hostY
-      }
-      snapshot.host.addView(view, params)
+      // In the host's overlay, not among its children: adding or removing a child lays out the whole window, and
+      // after that layout the traversal made two binder calls to the system (3-4 ms on a Mi 11 Lite) in the overlay's
+      // first frame and again in the frame that removes it. The overlay draws above every child and lays nothing out.
+      snapshot.host.overlay.add(view)
+      view.layout(snapshot.hostX, snapshot.hostY, snapshot.hostX + bitmap.width, snapshot.hostY + bitmap.height)
       val rootAt = WindowSnapshot.locationOf(reactRoot)
       overlay = view
       geometry = OverlayGeometry(snapshot.cover, rootAt[0], rootAt[1], snapshot.screenX, snapshot.screenY)
