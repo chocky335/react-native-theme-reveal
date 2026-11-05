@@ -67,9 +67,68 @@ class CapturePlanTest {
 
   @Test
   fun aTimeoutOrAnErrorTurnsTheGpuPathOffButASyncFailureDoesNot() {
-    assertTrue(CapturePlan.turnsGpuOff(GpuFailure.TIMEOUT))
-    assertTrue(CapturePlan.turnsGpuOff(GpuFailure.ERROR))
-    assertFalse(CapturePlan.turnsGpuOff(GpuFailure.SYNC))
+    assertTrue(CapturePlan.turnsGpuOff(GpuFailure.TIMEOUT, copyThreadBusy = false))
+    assertTrue(CapturePlan.turnsGpuOff(GpuFailure.ERROR, copyThreadBusy = false))
+    assertFalse(CapturePlan.turnsGpuOff(GpuFailure.SYNC, copyThreadBusy = false))
+  }
+
+  @Test
+  fun aTimeoutWhileTheWarmUpHoldsTheCopyThreadKeepsTheGpuPath() {
+    // The image waits behind the warm-up's pre-create on the copy thread, so the next switch tries the GPU again.
+    assertFalse(CapturePlan.turnsGpuOff(GpuFailure.TIMEOUT, copyThreadBusy = true))
+    assertTrue(CapturePlan.turnsGpuOff(GpuFailure.ERROR, copyThreadBusy = true))
+    assertFalse(CapturePlan.turnsGpuOff(GpuFailure.SYNC, copyThreadBusy = true))
+  }
+
+  @Test
+  fun aTimeoutBehindAPreCreateIsForgivenAndTheNextSwitchStillTriesTheGpu() {
+    val preCreates = PreCreates()
+    preCreates.started()
+    val atStart = preCreates.count
+    assertFalse(preCreates.skipsGpu())
+    assertFalse(preCreates.turnsGpuOff(GpuFailure.TIMEOUT, true, atStart))
+    preCreates.finished()
+    assertFalse(preCreates.skipsGpu())
+  }
+
+  @Test
+  fun aPreCreateThatNeverReturnsCostsOnlyTheFirstSwitchTheTimeout() {
+    val preCreates = PreCreates()
+    preCreates.started()
+    assertFalse(preCreates.turnsGpuOff(GpuFailure.TIMEOUT, true, preCreates.count))
+    // Pre-create still holds the copy thread, so the next switches go straight to PixelCopy without the wait.
+    assertTrue(preCreates.skipsGpu())
+    assertTrue(preCreates.skipsGpu())
+  }
+
+  @Test
+  fun aNewPreCreateGetsItsOwnForgivenTimeout() {
+    // A JS reload warms up again, and the new pre-create queues behind the old one.
+    val preCreates = PreCreates()
+    preCreates.started()
+    assertFalse(preCreates.turnsGpuOff(GpuFailure.TIMEOUT, true, preCreates.count))
+    preCreates.started()
+    assertFalse(preCreates.skipsGpu())
+    assertFalse(preCreates.turnsGpuOff(GpuFailure.TIMEOUT, false, preCreates.count))
+    assertTrue(preCreates.skipsGpu())
+  }
+
+  @Test
+  fun aPreCreateThatStartsDuringTheCaptureMakesTheCopyThreadBusy() {
+    val preCreates = PreCreates()
+    val atStart = preCreates.count
+    preCreates.started()
+    preCreates.finished()
+    assertFalse(preCreates.turnsGpuOff(GpuFailure.TIMEOUT, false, atStart))
+  }
+
+  @Test
+  fun withoutAPreCreateATimeoutTurnsTheGpuOffAndNothingIsSkipped() {
+    val preCreates = PreCreates()
+    assertTrue(preCreates.turnsGpuOff(GpuFailure.TIMEOUT, false, preCreates.count))
+    assertTrue(preCreates.turnsGpuOff(GpuFailure.ERROR, false, preCreates.count))
+    assertFalse(preCreates.turnsGpuOff(GpuFailure.SYNC, false, preCreates.count))
+    assertFalse(preCreates.skipsGpu())
   }
 
   @Test
@@ -81,20 +140,27 @@ class CapturePlanTest {
 
   @Test
   fun fromApi29TheWarmUpPreparesTheGpuCaptureAndKeepsNoBitmap() {
-    assertEquals(WarmUp.GPU, CapturePlan.warmUp(29, gpuOff = false))
-    assertEquals(WarmUp.GPU, CapturePlan.warmUp(37, gpuOff = false))
+    assertEquals(WarmUp.GPU, warmUp(29))
+    assertEquals(WarmUp.GPU, warmUp(37))
   }
 
   @Test
   fun belowApi29TheWarmUpKeepsABitmapForPixelCopy() {
-    assertEquals(WarmUp.KEPT_BITMAP, CapturePlan.warmUp(26, gpuOff = false))
-    assertEquals(WarmUp.KEPT_BITMAP, CapturePlan.warmUp(28, gpuOff = false))
+    assertEquals(WarmUp.KEPT_BITMAP, warmUp(26))
+    assertEquals(WarmUp.KEPT_BITMAP, warmUp(28))
   }
 
   @Test
   fun withTheGpuPathTurnedOffTheWarmUpKeepsABitmap() {
     // A JS reload warms up again in the same process, after a GPU capture timed out or threw.
-    assertEquals(WarmUp.KEPT_BITMAP, CapturePlan.warmUp(33, gpuOff = true))
+    assertEquals(WarmUp.KEPT_BITMAP, warmUp(33, gpuOff = true))
+  }
+
+  @Test
+  fun anActivityWindowThatTakesPixelCopyGetsAKeptBitmapFromApi29() {
+    assertEquals(WarmUp.KEPT_BITMAP, warmUp(33, defaultColorMode = false))
+    assertEquals(WarmUp.KEPT_BITMAP, warmUp(33, hardwareAccelerated = false))
+    assertEquals(WarmUp.KEPT_BITMAP, warmUp(37, hasLight = false))
   }
 
   @Test
@@ -124,4 +190,12 @@ class CapturePlanTest {
     pendingUnderForceDark: Boolean = false,
     gpuOff: Boolean = false,
   ) = CapturePlan.path(apiLevel, defaultColorMode, hardwareAccelerated, pendingUnderForceDark, gpuOff)
+
+  private fun warmUp(
+    apiLevel: Int,
+    defaultColorMode: Boolean = true,
+    hardwareAccelerated: Boolean = true,
+    hasLight: Boolean = true,
+    gpuOff: Boolean = false,
+  ) = CapturePlan.warmUp(apiLevel, defaultColorMode, hardwareAccelerated, hasLight, gpuOff)
 }

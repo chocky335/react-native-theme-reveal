@@ -64,14 +64,30 @@ internal object CapturePlan {
     apiLevel >= Build.VERSION_CODES.Q && nightMode && lightTheme &&
       (forceDarkAllowed || apiLevel >= Build.VERSION_CODES.BAKLAVA)
 
-  // Warm-up prepares the path the first switch takes: GPU capture on API 29+, otherwise PixelCopy.
-  fun warmUp(apiLevel: Int, gpuOff: Boolean): WarmUp =
-    if (apiLevel >= Build.VERSION_CODES.Q && !gpuOff) WarmUp.GPU else WarmUp.KEPT_BITMAP
+  // Warm-up prepares the path the activity window's first switch takes: GPU capture on API 29+, otherwise
+  // PixelCopy. hasLight: the theme has the light values for shadows (GpuSnapshot.lightOf).
+  fun warmUp(
+    apiLevel: Int,
+    defaultColorMode: Boolean,
+    hardwareAccelerated: Boolean,
+    hasLight: Boolean,
+    gpuOff: Boolean,
+  ): WarmUp =
+    if (hasLight && path(apiLevel, defaultColorMode, hardwareAccelerated, false, gpuOff) == CapturePath.GPU) {
+      WarmUp.GPU
+    } else {
+      WarmUp.KEPT_BITMAP
+    }
 
   fun syncFailed(result: Int): Boolean = result and SYNC_FAILED != 0
 
-  // A timeout or error can repeat on every switch, so the process stops trying the GPU.
-  fun turnsGpuOff(failure: GpuFailure): Boolean = failure != GpuFailure.SYNC
+  // A timeout or error can repeat on every switch, so the process stops trying the GPU. A timeout while the warm-up's
+  // pre-create holds the copy thread (copyThreadBusy) says nothing about the GPU, so the next switch tries it.
+  fun turnsGpuOff(failure: GpuFailure, copyThreadBusy: Boolean): Boolean = when (failure) {
+    GpuFailure.SYNC -> false
+    GpuFailure.TIMEOUT -> !copyThreadBusy
+    GpuFailure.ERROR -> true
+  }
 
   // Where ThreadedRenderer.setLightCenter puts a window's light: above the display's horizontal center, lightY from
   // its top, shifted into window space. From API 34 the height scales with the display's smallest side.
@@ -93,6 +109,41 @@ internal object CapturePlan {
       lightZ
     }
     return LightSource(displayWidth / 2f - windowLeft, lightY - windowTop, z, lightRadius)
+  }
+}
+
+// The warm-up's GPU pre-creates on the copy thread. A GPU capture's image arrives on that thread, so it can wait
+// behind a pre-create past the timeout. The first such timeout of each pre-create is forgiven and the GPU path stays
+// on. If that pre-create still holds the copy thread at a later switch, that switch skips the GPU capture. So a
+// pre-create that never returns costs only one switch the timeout. Main thread only.
+internal class PreCreates {
+  // How many have started.
+  var count = 0
+    private set
+  private var running = 0
+  private var forgivenAt = -1
+
+  // One is queued or running.
+  val busy: Boolean
+    get() = running > 0
+
+  fun started() {
+    count++
+    running++
+  }
+
+  fun finished() {
+    running--
+  }
+
+  // At a switch's start, the copy thread is still running a pre-create that already cost a switch the timeout.
+  fun skipsGpu(): Boolean = running > 0 && forgivenAt == count
+
+  // A failed GPU capture. busyAtStart and countAtStart are read when the capture started.
+  fun turnsGpuOff(failure: GpuFailure, busyAtStart: Boolean, countAtStart: Int): Boolean {
+    val copyThreadBusy = busyAtStart || running > 0 || count != countAtStart
+    if (failure == GpuFailure.TIMEOUT && copyThreadBusy) forgivenAt = count
+    return CapturePlan.turnsGpuOff(failure, copyThreadBusy)
   }
 }
 

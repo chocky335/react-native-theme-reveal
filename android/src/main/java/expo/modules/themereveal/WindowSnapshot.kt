@@ -133,22 +133,25 @@ internal object WindowSnapshot {
       // A decor is dirty while a view change waits for the window's next frame. Read it before the draw clears it.
       val dirty = decors.filter { it.isDirty }
       val pending = dirty.isNotEmpty()
-      if (pending && Log.isLoggable(TAG, Log.DEBUG)) {
-        Log.d(TAG, "a view change waits for its frame in ${dirty.size} window(s)")
-      }
       val forceDark = pending && GpuSnapshot.forceDarkCanApply(activity)
       val light = if (CapturePlan.path(api, defaultColor, accelerated, forceDark, gpuOff) == CapturePath.GPU) {
         GpuSnapshot.lightOf(activity, decor)
       } else {
         null
       }
-      if (light != null && decor.width > 0 && decor.height > 0) {
+      if (light != null && decor.width > 0 && decor.height > 0 && !preCreates.skipsGpu()) {
+        if (pending && Log.isLoggable(TAG, Log.DEBUG)) {
+          Log.d(TAG, "a view change waits for its frame in ${dirty.size} window(s)")
+        }
+        // Image arrives on the copy thread, where a warm-up pre-create can hold it back past the timeout.
+        val busyAtStart = preCreates.busy
+        val countAtStart = preCreates.count
         GpuSnapshot.capture(decor.width, decor.height, light, dirty, handler, copyHandler, draw) { bitmap, failure ->
           if (bitmap != null) {
             onResult(bitmap)
             return@capture
           }
-          if (failure != null && CapturePlan.turnsGpuOff(failure)) gpuOff = true
+          if (failure != null && preCreates.turnsGpuOff(failure, busyAtStart, countAtStart)) gpuOff = true
           pixelCopy(onResult)
         }
         return
@@ -250,14 +253,14 @@ internal object WindowSnapshot {
     copyHandler
   }
 
-  // Main thread, after warmUp. Prepares the path the first switch takes: on API 29+, a GPU capture of nothing on
-  // the copy thread with no bitmap kept. Otherwise keepOne.
+  // Main thread, after warmUp. Prepares the path the activity window's first switch takes: on API 29+, a GPU
+  // capture of nothing on the copy thread with no bitmap kept. Otherwise (a window that takes PixelCopy) keepOne.
   fun prepareFirst(activity: Activity?, handler: Handler) {
-    val api = Build.VERSION.SDK_INT
-    if (api < Build.VERSION_CODES.Q || CapturePlan.warmUp(api, gpuOff) == WarmUp.KEPT_BITMAP) {
+    if (warmUpOf(activity) == WarmUp.KEPT_BITMAP) {
       keepOne(activity, handler)
       return
     }
+    preCreates.started()
     copyHandler.post {
       try {
         GpuSnapshot.preCreate()
@@ -266,9 +269,30 @@ internal object WindowSnapshot {
         Log.w(TAG, "Cannot prepare the GPU capture", thrown)
       } catch (thrown: OutOfMemoryError) {
         Log.w(TAG, "Cannot prepare the GPU capture", thrown)
+      } finally {
+        handler.post { preCreates.finished() }
       }
     }
   }
+
+  // The activity window's inputs to the capture path, read the same way captureWindows reads them. Without a
+  // window, the GPU capture is the likely path from API 29.
+  private fun warmUpOf(activity: Activity?): WarmUp {
+    val api = Build.VERSION.SDK_INT
+    if (api < Build.VERSION_CODES.Q) return WarmUp.KEPT_BITMAP
+    val window = activity?.window
+    val decor = window?.peekDecorView()
+    if (activity == null || window == null || decor == null) return CapturePlan.warmUp(api, true, true, true, gpuOff)
+    return CapturePlan.warmUp(
+      api,
+      window.colorMode == ActivityInfo.COLOR_MODE_DEFAULT,
+      decor.isHardwareAccelerated,
+      GpuSnapshot.lightOf(activity, decor) != null,
+      gpuOff,
+    )
+  }
+
+  private val preCreates = PreCreates()
 
   // Main thread. If kept has room, allocates a bitmap of the activity window's size on the copy thread, copies the
   // window into it once and keeps it. The first copy into a bitmap is the slow one (roughly twice as long as later
