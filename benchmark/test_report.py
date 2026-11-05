@@ -14,7 +14,9 @@ HEADER = (
 )
 
 
-def run(device, lib, overlay, snapshot=10.0, p50=16.0, p90=20.0, share=0.25, late=1, missed=5, gap=30.0, valid=True):
+def run(
+    device, lib, overlay, snapshot=10.0, p50=16.0, p90=20.0, share=0.25, late=1, missed=5, gap=30.0, valid=True, vsync=16.6
+):
     return {
         'device': device,
         'lib': lib,
@@ -26,7 +28,7 @@ def run(device, lib, overlay, snapshot=10.0, p50=16.0, p90=20.0, share=0.25, lat
         'lateFrames': late,
         'missedVsyncs': missed,
         'jsMaxGapMs': gap,
-        'vsyncMs': 16.6,
+        'vsyncMs': vsync,
         'valid': valid,
     }
 
@@ -75,6 +77,79 @@ class ReportTest(unittest.TestCase):
                 [sys.executable, '-I', os.path.join(HERE, 'report.py'), path], check=True, capture_output=True, text=True
             ).stdout
         self.assertIn('| M2101K9AG | ours | 1/1 | 224.9 |', output)
+
+
+class GateTest(unittest.TestCase):
+    def rows(self, runs):
+        lines, fails = report.gate(runs)
+        return {line.split(' | ')[1]: line for line in lines[2:]}, fails
+
+    def test_passes_up_to_five_percent_over_the_best_alternative(self):
+        runs = [
+            run('M2101K9AG', 'ours', 105.0),
+            run('M2101K9AG', 'theme-switch-animation', 100.0),
+            run('M2101K9AG', 'skia', 400.0),
+        ]
+        rows, fails = self.rows(runs)
+        self.assertEqual(
+            rows['Overlay frame (ms)'],
+            '| M2101K9AG | Overlay frame (ms) | 105.0 | 100.0 (theme-switch-animation) | 105.0 | PASS |',
+        )
+        self.assertEqual(fails, 0)
+        self.assertNotIn('Frame interval (ms)', rows)
+
+    def test_fails_over_the_limit_and_counts_the_rows(self):
+        runs = [run('M2101K9AG', 'ours', 106.0, missed=4), run('M2101K9AG', 'theme-switch-animation', 100.0, missed=3)]
+        rows, fails = self.rows(runs)
+        self.assertTrue(rows['Overlay frame (ms)'].endswith('| 105.0 | FAIL |'))
+        self.assertEqual(rows['Missed vsyncs'], '| M2101K9AG | Missed vsyncs | 4 | 3 (theme-switch-animation) | 3.15 | FAIL |')
+        self.assertEqual(fails, 2)
+
+    def test_janky_share_shows_as_a_percent(self):
+        runs = [run('Pixel-8-Pro', 'ours', 50.0, share=0.10), run('Pixel-8-Pro', 'theme-switch-animation', 60.0, share=0.06)]
+        rows, _ = self.rows(runs)
+        self.assertEqual(rows['Janky (%)'], '| Pixel-8-Pro | Janky (%) | 10 | 6 (theme-switch-animation) | 6 | FAIL |')
+
+    def test_an_alternative_at_another_frame_rate_is_left_out_of_the_frame_metrics(self):
+        runs = [
+            run('Pixel-8-Pro', 'ours', 50.0, p90=8.0, vsync=16.4),
+            run('Pixel-8-Pro', 'theme-switch-animation', 60.0, p90=9.5, vsync=16.6),
+            run('Pixel-8-Pro', 'skia', 300.0, snapshot=5.0, p90=4.0, vsync=32.9),
+        ]
+        rows, _ = self.rows(runs)
+        self.assertIn('| 9.5 (theme-switch-animation) |', rows['Frame p90 (ms)'])
+        self.assertIn('| 5.0 (skia) |', rows['Snapshot, JS (ms)'])
+
+    def test_invalid_runs_do_not_count(self):
+        runs = [
+            run('M2101K9AG', 'ours', 100.0),
+            run('M2101K9AG', 'theme-switch-animation', 120.0),
+            run('M2101K9AG', 'theme-switch-animation', 10.0, valid=False),
+        ]
+        rows, _ = self.rows(runs)
+        self.assertIn('| 120.0 (theme-switch-animation) |', rows['Overlay frame (ms)'])
+
+    def test_no_alternative_gives_n_a(self):
+        rows, fails = self.rows([run('M2101K9AG', 'ours', 100.0)])
+        self.assertEqual(rows['Overlay frame (ms)'], '| M2101K9AG | Overlay frame (ms) | 100.0 | - | - | n/a |')
+        self.assertEqual(fails, 0)
+
+    def test_cli_gate_option(self):
+        with tempfile.TemporaryDirectory() as folder:
+            paths = []
+            for lib, overlay in (('ours', 90.0), ('theme-switch-animation', 100.0)):
+                path = os.path.join(folder, f'M2101K9AG-{lib}-1.json')
+                with open(path, 'w') as file:
+                    json.dump(run('M2101K9AG', lib, overlay), file)
+                paths.append(path)
+            output = subprocess.run(
+                [sys.executable, '-I', os.path.join(HERE, 'report.py'), '--gate', *paths],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+        self.assertIn('| M2101K9AG | Overlay frame (ms) | 90.0 | 100.0 (theme-switch-animation) | 105.0 | PASS |', output)
+        self.assertTrue(output.endswith('\nFAIL rows: 0\n'))
 
 
 if __name__ == '__main__':

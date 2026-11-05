@@ -3,7 +3,12 @@
 Markdown comparison table from the per-run JSON files that android.sh writes: one row per device and library,
 with the median of each metric over the valid runs. Runs shows valid / all. A run that doesn't count
 (runresult.py: invalid) is left out of every median and listed under the table with its reasons.
-"Overlay frame" is the column that decides pass/fail.
+
+report.py --gate <results/*.json>
+
+Pass/fail table instead: for each device and metric, ours against the best alternative's median plus 5% (lower is
+better). An alternative that drew at a frame interval more than 10% off ours is left out of the frame metrics
+(p50, p90, janky, late frames, missed vsyncs), as for Skia at 30 Hz on the Pixel 8 Pro.
 """
 
 import json
@@ -23,6 +28,9 @@ COLUMNS = [
     ('Frame interval (ms)', 'vsyncMs'),
 ]
 COUNTS = ('lateFrames', 'missedVsyncs')
+FRAME_METRICS = ('p50', 'p90', 'jankyShare', 'lateFrames', 'missedVsyncs')
+GATE_MARGIN = 1.05
+SAME_RATE = 0.10
 
 
 def library_rank(lib):
@@ -70,11 +78,61 @@ def excluded(runs):
     return '\n'.join(['Runs that do not count:'] + lines) if lines else ''
 
 
+def gate(runs):
+    """Pass/fail lines and the count of FAIL rows. Only valid runs count."""
+    groups = {}
+    for run in runs:
+        if run.get('valid'):
+            groups.setdefault(run['device'], {}).setdefault(run['lib'], []).append(run)
+    lines = ['| Device | Metric | ours | Best alternative | Limit (+5%) | Result |', '|---|---|---|---|---|---|']
+    fails = 0
+    for device in sorted(groups):
+        libs = groups[device]
+        if 'ours' not in libs:
+            continue
+        ours_interval = median_of(libs['ours'], 'vsyncMs')
+        for title, key in COLUMNS:
+            if key == 'vsyncMs':
+                continue
+            ours = median_of(libs['ours'], key)
+            best = None
+            for lib, group in libs.items():
+                if lib == 'ours':
+                    continue
+                if key in FRAME_METRICS and ours_interval:
+                    interval = median_of(group, 'vsyncMs')
+                    if interval is None or abs(interval / ours_interval - 1) > SAME_RATE:
+                        continue
+                value = median_of(group, key)
+                if value is not None and (best is None or value < best[1]):
+                    best = (lib, value)
+            if ours is None or best is None:
+                lines.append(f'| {device} | {title} | {cell(key, ours)} | - | - | n/a |')
+                continue
+            limit = best[1] * GATE_MARGIN
+            passed = ours <= limit + 1e-9
+            fails += not passed
+            shown_limit = f'{limit:.2f}' if key in COUNTS else cell(key, limit)
+            lines.append(
+                f'| {device} | {title} | {cell(key, ours)} | {cell(key, best[1])} ({best[0]}) | {shown_limit} | '
+                + ('PASS' if passed else 'FAIL')
+                + ' |'
+            )
+    return lines, fails
+
+
 def main():
+    args = sys.argv[1:]
+    gate_mode = bool(args) and args[0] == '--gate'
     runs = []
-    for path in sys.argv[1:]:
+    for path in args[1:] if gate_mode else args:
         with open(path) as file:
             runs.append(json.load(file))
+    if gate_mode:
+        lines, fails = gate(runs)
+        print('\n'.join(lines))
+        print(f'\nFAIL rows: {fails}')
+        return
     print(table(runs))
     note = excluded(runs)
     if note:

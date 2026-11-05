@@ -165,8 +165,15 @@ python3 benchmark/report.py benchmark/results/*.json
 - By default it talks to the standard adb server. For a remote one, set `ADB_SERVER_SOCKET` plus a lease: either
   `BENCH_LEASE` (a helper that runs `<helper> <serial> <max-wait-s> -- <command>`) or `BENCH_LEASED=1` (you
   already hold the lease). If the file named by `BENCH_PAUSED_FILE` exists, the pass stops.
-- `report.py` prints a row per device and library. `Runs` shows valid / all, every metric column is the median
-  over valid runs, and `Overlay frame` is the column that decides pass/fail.
+- `report.py` prints a row per device and library. `Runs` shows valid / all, and every metric column is the median
+  over valid runs.
+- `report.py --gate` prints the pass/fail table instead. For each device and metric, ours passes when its median
+  is no more than 5% above the best alternative's median. If an alternative drew at a frame interval more than 10%
+  away from ours, it's left out of the frame metrics (p50, p90, janky, late frames, missed vsyncs).
+
+```sh
+python3 benchmark/report.py --gate benchmark/results/*.json
+```
 
 To measure the first switch in a fresh process (`results/cold/`), set `BENCH_COLD=1`. The pass then skips the
 warm-up run and force-stops the app 1 s before each run.
