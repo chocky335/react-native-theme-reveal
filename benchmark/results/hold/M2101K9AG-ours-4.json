@@ -1,0 +1,42 @@
+{
+  "device": "M2101K9AG",
+  "lib": "ours",
+  "round": 4,
+  "position": 1,
+  "order": [
+    "ours",
+    "theme-switch-animation",
+    "skia"
+  ],
+  "scales": {
+    "animator_duration_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "window_animation_scale": "1.0"
+  },
+  "snapshotMs": 33.7,
+  "jsMaxGapMs": 26.7,
+  "totalMs": 522.7,
+  "durationMs": 450.0,
+  "pressAt": 882311211.0,
+  "t0": "event",
+  "overlayAt": 882311244.7,
+  "endAt": 882311733.7,
+  "target": "dark",
+  "transition": "reveal",
+  "capture": "gpu",
+  "frames": 28,
+  "p50": 15.43,
+  "p90": 25.03,
+  "vsyncMs": 16.56,
+  "janky": 11,
+  "jankyShare": 0.393,
+  "jankyOverMs": 16.6,
+  "overlayFrameMs": 38.5,
+  "overlayLeadMs": 3.9,
+  "missedVsyncs": 1,
+  "lateFrames": 2,
+  "valid": true,
+  "invalid": [],
+  "bench": "BENCH lib=ours snapshotMs=33.7 jsMaxGapMs=26.7 totalMs=522.7 durationMs=450 pressAt=882311211.0 t0=event overlayAt=882311244.7 endAt=882311733.7 target=dark transition=reveal capture=gpu",
+  "dump": "M2101K9AG-ours-4.txt"
+}

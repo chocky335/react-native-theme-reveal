@@ -1,0 +1,41 @@
+{
+  "device": "Pixel-8-Pro",
+  "lib": "theme-switch-animation",
+  "round": 2,
+  "position": 1,
+  "order": [
+    "theme-switch-animation",
+    "skia",
+    "ours"
+  ],
+  "scales": {
+    "animator_duration_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "window_animation_scale": "1.0"
+  },
+  "snapshotMs": 62.4,
+  "jsMaxGapMs": 33.0,
+  "totalMs": 779.5,
+  "durationMs": 450.0,
+  "pressAt": 617618231.0,
+  "t0": "event",
+  "overlayAt": 617618293.4,
+  "endAt": 617619010.5,
+  "target": "dark",
+  "overlay": "1",
+  "frames": 31,
+  "p50": 8.2,
+  "p90": 10.03,
+  "vsyncMs": 16.55,
+  "janky": 2,
+  "jankyShare": 0.065,
+  "jankyOverMs": 16.6,
+  "overlayFrameMs": 58.2,
+  "overlayLeadMs": 17.8,
+  "missedVsyncs": 2,
+  "lateFrames": 0,
+  "valid": true,
+  "invalid": [],
+  "bench": "BENCH lib=theme-switch-animation snapshotMs=62.4 jsMaxGapMs=33.0 totalMs=779.5 durationMs=450 pressAt=617618231.0 t0=event overlayAt=617618293.4 endAt=617619010.5 target=dark overlay=1",
+  "dump": "Pixel-8-Pro-theme-switch-animation-2.txt"
+}

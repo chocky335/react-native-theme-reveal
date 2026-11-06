@@ -1,0 +1,41 @@
+{
+  "device": "M2101K9AG",
+  "lib": "skia",
+  "round": 3,
+  "position": 1,
+  "order": [
+    "skia",
+    "ours",
+    "theme-switch-animation"
+  ],
+  "scales": {
+    "animator_duration_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "window_animation_scale": "1.0"
+  },
+  "snapshotMs": 452.7,
+  "jsMaxGapMs": 434.3,
+  "totalMs": 977.3,
+  "durationMs": 450.0,
+  "pressAt": 882503737.0,
+  "t0": "event",
+  "overlayAt": 882504189.7,
+  "endAt": 882504714.3,
+  "target": "dark",
+  "overlay": "1",
+  "frames": 29,
+  "p50": 17.37,
+  "p90": 26.24,
+  "vsyncMs": 16.7,
+  "janky": 17,
+  "jankyShare": 0.586,
+  "jankyOverMs": 16.7,
+  "overlayFrameMs": 515.4,
+  "overlayLeadMs": -55.4,
+  "missedVsyncs": 30,
+  "lateFrames": 1,
+  "valid": true,
+  "invalid": [],
+  "bench": "BENCH lib=skia snapshotMs=452.7 jsMaxGapMs=434.3 totalMs=977.3 durationMs=450 pressAt=882503737.0 t0=event overlayAt=882504189.7 endAt=882504714.3 target=dark overlay=1",
+  "dump": "M2101K9AG-skia-3.txt"
+}

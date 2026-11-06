@@ -260,7 +260,8 @@ Switches to `theme` with an animation.
 - If `theme` is already current, `switchTo` removes any snapshot that's on screen, frees a press-in snapshot and
   returns.
 - The newest `switchTo` call wins. An older call still waiting for its snapshot does nothing.
-- If the snapshot fails, `setTheme` still runs without animation, so the theme always applies.
+- If the snapshot fails, `setTheme` still runs without animation. There's one case on Android API 29 to 33 where
+  it waits instead, see [How it works on Android](#how-it-works-on-android).
 - The promise resolves once the theme is set, before the animation ends. Use `onSettled` if you need the end.
 - It only rejects if `getTheme` or `setTheme` throws.
 
@@ -417,6 +418,11 @@ falls back to `PixelCopy` too when:
   the warm-up is still holding the thread at a later switch, that switch goes straight to `PixelCopy` without
   waiting the 250 ms.
 
+A warm-up that never ends is a problem on API 29 to 33, because there the `PixelCopy` request runs on the copy
+thread too. The `PixelCopy` snapshot then waits behind the warm-up, and so do the switch and `setTheme`. I haven't
+measured this, since no test made the warm-up hang. On API 34 and up the `PixelCopy` request runs on the main
+thread and doesn't wait.
+
 I compared the GPU snapshot with `PixelCopy` on a Mi 11 Lite (API 33) and a Pixel 8 Pro (API 37). On the home
 screen, the benchmark screen, a screen with elevation shadows and a full-screen modal, not a single pixel differs.
 With a transparent modal and a dim, 0.6% to 0.7% of the pixels differ by 1 or 2 out of 255 in a channel, at
@@ -431,6 +437,10 @@ The GPU snapshot has a few other quirks:
 - The TalkBack focus rectangle isn't in it, because the window draws that rectangle outside its views.
 - A screenshot that draws the window into a software canvas (`View.draw`) while the overlay is up leaves the
   overlay out, because a software canvas can't draw a hardware bitmap.
+- I haven't checked a `WebView`, a `TextureView` or a `SurfaceView`, and no test compared the GPU snapshot with
+  the screen for them. The GPU snapshot draws the views in its own `HardwareRenderer`. A `WebView` draws through a
+  functor in that renderer, and a `SurfaceView` gets that renderer's frame number for its position. If your app
+  shows one of these, compare a snapshot with the screen.
 
 The `PixelCopy` snapshot matches the screen exactly for the activity window. Under a transparent modal's dim on a
 Pixel 8 Pro, 186 single pixels at text edges were off by up to 5 out of 255 in a channel (2%), from the CPU blend
@@ -548,8 +558,10 @@ immediately without animating.
 
 ## Performance
 
-Measured on 2026-10-28 with release builds. The method, raw dumps and scripts live in [`benchmark/`](benchmark/),
-and the detailed results and notes are in [`benchmark/RESULTS.md`](benchmark/RESULTS.md).
+Measured on 2026-11-06 with release builds. Since then the code has changed in one Android path that no benchmark
+run took, and that change adds one check to each capture. I haven't measured it. The method, raw dumps and scripts
+live in [`benchmark/`](benchmark/), and the full tables, the history and the notes are in
+[`benchmark/RESULTS.md`](benchmark/RESULTS.md).
 
 Everything runs in one build of the example app, on the same screen, with a 450 ms circle reveal:
 - `ours`: this package.
@@ -559,69 +571,105 @@ Everything runs in one build of the example app, on the same screen, with a 450 
 
 | Device | OS | Build | Runs per library |
 |---|---|---|---|
-| Xiaomi Mi 11 Lite (`M2101K9AG`) | Android 13 (API 33) | release, `arm64-v8a` | 1 warm-up + 6 interleaved rounds, median of 6 |
-| Pixel 8 Pro | Android 17 (API 37) | release, `arm64-v8a` | 1 warm-up + 6 interleaved rounds, median of 6 |
-| iPhone 17 Pro simulator on a Mac | iOS 26.5 | Release, simulator | 1 warm-up + 6 interleaved rounds, median of 6 |
+| Xiaomi Mi 11 Lite (`M2101K9AG`) | Android 13 (API 33) | release, `arm64-v8a`, compiled with `speed` | warm: 1 warm-up + 6 interleaved rounds. Cold: 3 rounds |
+| Pixel 8 Pro | Android 17 (API 37) | release, `arm64-v8a`, compiled with `speed` | warm: 1 warm-up + 6 interleaved rounds. Cold: 3 rounds |
 
-Both Android phones drew at 60 Hz during these runs. Lower is better in every column.
+A few things about how these were run:
+- Before each pass the benchmark compiles the whole app ahead of time (`cmd package compile -f -m speed`), so all
+  three libraries run compiled code. That means it doesn't show what the [Baseline Profile](#baseline-profile)
+  does for a Play install.
+- Each pass runs with two kinds of tap, the same for every library. `input tap` holds the press for about 0 ms,
+  which no finger does, so there's also a hold form that presses for 100 ms (`input swipe x y x y 100`). The clock
+  starts at the release (`onPress`) in both. Ours takes its snapshot on press-in
+  ([Snapshot on press-in](#snapshot-on-press-in)), so the hold form is closer to what a finger gets.
+- Cold means the first switch in a fresh process: the app is force-stopped 1 s before each run. The screen mounts
+  about 1.5 s before the tap, so the warm-up has finished by then. If your app's first switch comes sooner, it
+  won't look like this.
+- Every `ours` run took the GPU snapshot (`capture=gpu`).
+- Both phones drew at 60 Hz, except Skia on the Pixel 8 Pro, which drew at 30 Hz.
+
+Warm, `input tap` (median of 6). Lower is better in every column.
 
 | Device | Library | Overlay frame (ms) | Snapshot, JS (ms) | Frame p50 (ms) | Frame p90 (ms) | Janky (%) | Late frames | Missed vsyncs | JS max gap (ms) |
 |---|---|---|---|---|---|---|---|---|---|
-| Mi 11 Lite | ours | 84.8 | 72.6 | 16.5 | 23.2 | 47 | 1 | 4 | 39.0 |
-| Mi 11 Lite | theme-switch-animation | 91.4 | 80.4 | 17.2 | 22.6 | 61 | 1 | 4 | 37.0 |
-| Mi 11 Lite | skia | 432.9 | 400.5 | 18.4 | 25.0 | 68 | 1 | 25 | 374.9 |
-| Pixel 8 Pro | ours | 72.3 | 60.1 | 5.6 | 8.0 | 0 | 0 | 4 | 28.0 |
-| Pixel 8 Pro | theme-switch-animation | 62.8 | 58.1 | 8.3 | 9.6 | 5 | 1 | 3 | 25.1 |
-| Pixel 8 Pro | skia | 313.4 | 285.4 | 7.1 (1) | 9.7 (1) | 0 (1) | 0 (1) | 9 (1) | 265.7 |
+| Mi 11 Lite | ours | 73.0 | 60.0 | 16.6 | 21.9 | 52 | 0.5 | 3 | 31.7 |
+| Mi 11 Lite | theme-switch-animation | 70.7 | 69.3 | 17.4 | 21.3 | 63 | 1 | 2.5 | 39.2 |
+| Mi 11 Lite | skia | 425.6 | 401.6 | 18.7 | 23.5 | 62 | 0 | 25 | 383.6 |
+| Pixel 8 Pro | ours | 46.2 | 43.3 | 5.5 | 7.6 | 0 | 0 | 2 | 27.0 |
+| Pixel 8 Pro | theme-switch-animation | 56.2 | 51.2 | 8.2 | 9.5 | 0 | 0 | 2.5 | 25.4 |
+| Pixel 8 Pro | skia | 329.9 | 296.6 | 7.2 (1) | 9.2 (1) | 0 (1) | 0 (1) | 9 (1) | 273.5 |
+
+The overlay frame in all four forms (ms):
+
+| Device | Library | Warm tap | Warm hold | Cold tap | Cold hold |
+|---|---|---|---|---|---|
+| Mi 11 Lite | ours | 73.0 | 45.3 | 68.0 | 42.3 |
+| Mi 11 Lite | theme-switch-animation | 70.7 | 98.9 | 119.5 | 104.5 |
+| Mi 11 Lite | skia | 425.6 | 439.9 | 459.4 | 504.6 |
+| Pixel 8 Pro | ours | 46.2 | 40.5 | 68.7 | 49.7 |
+| Pixel 8 Pro | theme-switch-animation | 56.2 | 58.4 | 85.9 | 104.2 |
+| Pixel 8 Pro | skia | 329.9 | 324.8 | 384.7 | 370.9 |
 
 (1) Skia drew at 30 Hz on the Pixel 8 Pro, so its frame times, janky share, late frames and missed vsyncs there
-can't be compared with the other two. Its missed vsyncs are counted in 33 ms intervals, so 9 is roughly 18 at 60
-Hz.
+can't be compared with the other two. Its missed vsyncs are counted in 33 ms intervals, so 9 is about 18 at 60 Hz.
+That's why the release rule leaves Skia out of the Pixel 8 Pro frame rows. With Skia in them, one more row would
+fail: cold tap janky, 7% against 0% at 30 Hz.
 
-- Overlay frame: time from the touch to the first frame with the overlay on screen. On the Mi 11 Lite a system
+- Overlay frame: time from the release to the first frame with the overlay on screen. On the Mi 11 Lite a system
   trace confirmed which frame that is. On the Pixel 8 Pro it rests on `gfxinfo` data alone.
-- Snapshot, JS: time from the touch until JS knows the overlay is up.
+- Snapshot, JS: time from the release until JS knows the overlay is up.
 - JS max gap: longest gap between two `requestAnimationFrame` callbacks during the switch.
 - On React Native 0.86 (Fabric), `theme-switch-animation` shows no visible circle: it reveals the old screen over
   the old screen, and the new theme appears all at once at the end. Its timings are still real.
 
 ### Where ours loses
 
-The release rule: on each Android device, each of our medians has to be no more than 5% above the best
-alternative's median. Ours fails that on four metrics:
+The release rule: on each Android device, each of our medians must be no more than 5% above the best
+alternative's median. That's 16 rows per form, 64 in all. The overlay frame and snapshot JS pass in every form on
+both phones, and ours fails 8 rows. Values below are ours against the best alternative, with the limit in
+brackets.
 
-- Mi 11 Lite, JS max gap: 39.0 ms vs 37.0 ms for `theme-switch-animation` (+5.4%), against a limit of 38.9 ms. The
-  difference is within the spread between measurement passes, but it's still over the limit. I haven't traced the
-  cause.
-- Pixel 8 Pro, overlay frame: 72.3 ms vs 62.8 ms for `theme-switch-animation` (+15%). Our overlay shows up about
-  one frame later.
-- Pixel 8 Pro, missed vsyncs: 4 vs 3 for `theme-switch-animation` (one frame interval).
-- Pixel 8 Pro, JS max gap: 28.0 ms vs 25.1 ms for `theme-switch-animation` (+12%). I haven't traced the cause.
+Frame p90 on the Mi 11 Lite fails in two forms, and did in the run before this one too:
+- Warm hold: 24.8 ms vs 21.9 ms for `theme-switch-animation` [23.0 ms].
+- Cold tap: 23.3 ms vs 21.0 ms for `theme-switch-animation` [22.1 ms].
 
-Where the snapshot cost comes from (measured): ours reads the window back from the GPU with `PixelCopy`, which
-gives a pixel-exact snapshot. On the Mi 11 Lite a system trace shows this readback taking 25-47 ms for a 1080 x
-2400 window, mostly waiting on the GPU. `theme-switch-animation` draws the view tree into a software canvas
-instead. I couldn't get a system trace on the Pixel 8 Pro, so there the same readback cost is the likely cause but
-not a measured one.
+I measured the cause with a system trace and `gfxinfo`. Ours animates the reveal from the UI thread and draws the
+full-window snapshot in every frame. `theme-switch-animation` uses a RenderThread animator, which skips a vsync
+when the UI thread is busy instead of drawing a slow frame. In the hold form the GPU also goes idle after the
+press-in snapshot, so the first frames after the release cost 2-3 times what they do in the tap form. Moving the
+reveal to the RenderThread is the only lever left, and I haven't built it yet.
 
-On the first switch after a cold start (no benchmark warm-up run, and before the package had the `warmUp` option),
-ours is slower in seven places. Each value is a median of only 3 runs, so these numbers are noisy.
-- Pixel 8 Pro, overlay frame: 121.2 ms vs 96.7 ms for `theme-switch-animation` (+25%).
-- Pixel 8 Pro, snapshot JS: 100.5 ms vs 71.7 ms for `theme-switch-animation` (+40%).
-- Pixel 8 Pro, late frames: 1 vs 0 for `theme-switch-animation`.
-- Pixel 8 Pro, missed vsyncs: 5 vs 4 for `theme-switch-animation` (one frame interval).
-- Pixel 8 Pro, JS max gap: 36.1 ms vs 29.2 ms for `theme-switch-animation` (+24%).
-- Mi 11 Lite, late frames: 1 vs 0 for `skia` (`theme-switch-animation` also has 1).
-- Mi 11 Lite, JS max gap: 93.9 ms vs 41.2 ms for `theme-switch-animation` (2.3 times), which is also 2.4 times our
-  own warm value.
+Janky share on the Pixel 8 Pro fails in the warm hold: 3.4% vs 3.2% for `theme-switch-animation` [3.39%]. It
+failed in the run before as well (5% vs 3%). Both medians are 1 janky frame, but ours draws 29 frames in the window
+and `theme-switch-animation` 31, so one frame is a bigger share for ours. According to `gfxinfo`, the first frame
+after a press-in snapshot gets more expensive the longer the hold. At 100 ms it's about 21 ms, over the 16.5 ms
+threshold.
 
-On the Mi 11 Lite, ours wins the first-switch overlay frame and snapshot JS (89.0 and 68.8 ms vs 123.1 and 98.1
-ms). The full first-switch table is in [`benchmark/RESULTS.md`](benchmark/RESULTS.md).
+The other five rows passed in the run before this one. The one change in between that touched the frames moved
+the overlay into the window root's `ViewOverlay`, so it no longer lays out the window.
+
+Two of them are late frames on the Mi 11 Lite, where ours got worse after that change:
+- Warm tap: 0.5 vs 0 for Skia [0].
+- Warm hold: 0.5 vs 0 for Skia [0].
+
+Before the change, ours had a late frame in 1 of 12 runs (2 late frames in all). After it, ours had one in 6 of 12
+runs (9 in all). In the same passes `theme-switch-animation` had a late frame in fewer runs: tap 6 then 5 of 6,
+hold 6 then 3 of 6. One short run of 6 warm hold runs after the change gave ours a median of 0 late frames, and
+there's no other tap run after it. No trace shows the cause, so I can't rule out a regression from that change.
+
+The last three are rows where ours didn't move and the alternative did. They look like run-to-run noise, but no
+trace shows a cause:
+- Mi 11 Lite, warm tap, missed vsyncs: 3 vs 2.5 for `theme-switch-animation` [2.62]. Ours had 3 both times.
+- Pixel 8 Pro, warm tap, JS max gap: 27.0 ms vs 25.4 ms for `theme-switch-animation` [26.7 ms]. Ours had 27.2 ms
+  the run before.
+- Pixel 8 Pro, cold hold, janky share: 10% vs 6% for `theme-switch-animation` [7%]. Ours had 10% both times. The
+  cold forms only have 3 runs each.
 
 ### iOS (simulator)
 
-These numbers are from the iOS 26.5 simulator on a Mac, not a phone. There are no frame metrics, because `xctrace`
-doesn't support hitches on the simulator and this pass has no `CADisplayLink` frame probe.
+These numbers are from the iOS 26.5 simulator on a Mac, not a phone, measured on 2026-10-28 before the press-in
+snapshot existed. I haven't measured iOS again since. There are no frame metrics, because `xctrace` doesn't support
+hitches on the simulator and this pass has no `CADisplayLink` frame probe.
 
 | Library | Snapshot, JS (ms) | JS max gap (ms) |
 |---|---|---|

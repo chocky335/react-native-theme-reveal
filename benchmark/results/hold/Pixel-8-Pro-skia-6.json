@@ -1,0 +1,41 @@
+{
+  "device": "Pixel-8-Pro",
+  "lib": "skia",
+  "round": 6,
+  "position": 1,
+  "order": [
+    "skia",
+    "ours",
+    "theme-switch-animation"
+  ],
+  "scales": {
+    "animator_duration_scale": "1.0",
+    "transition_animation_scale": "1.0",
+    "window_animation_scale": "1.0"
+  },
+  "snapshotMs": 290.9,
+  "jsMaxGapMs": 269.7,
+  "totalMs": 776.9,
+  "durationMs": 450.0,
+  "pressAt": 617698147.0,
+  "t0": "event",
+  "overlayAt": 617698437.9,
+  "endAt": 617698923.9,
+  "target": "dark",
+  "overlay": "1",
+  "frames": 17,
+  "p50": 7.21,
+  "p90": 10.39,
+  "vsyncMs": 32.94,
+  "janky": 0,
+  "jankyShare": 0.0,
+  "jankyOverMs": 32.9,
+  "overlayFrameMs": 317.3,
+  "overlayLeadMs": -18.7,
+  "missedVsyncs": 9,
+  "lateFrames": 0,
+  "valid": true,
+  "invalid": [],
+  "bench": "BENCH lib=skia snapshotMs=290.9 jsMaxGapMs=269.7 totalMs=776.9 durationMs=450 pressAt=617698147.0 t0=event overlayAt=617698437.9 endAt=617698923.9 target=dark overlay=1",
+  "dump": "Pixel-8-Pro-skia-6.txt"
+}

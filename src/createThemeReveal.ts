@@ -24,8 +24,8 @@ export type ThemeRevealOptions<T> = {
   wipeDirection?: WipeDirection
   onError?: (error: unknown) => void
   onSettled?: (info: SettledInfo) => void
-  // Prepare the native snapshot path when useStart mounts (Android: copy thread, one kept window-size bitmap).
-  // Default true.
+  // Prepare the native snapshot path when useStart mounts (Android: the copy thread, then the GPU snapshot on API
+  // 29+, or one kept window-size bitmap below that). Default true.
   warmUp?: boolean
 }
 
