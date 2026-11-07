@@ -38,6 +38,12 @@ internal class RevealOverlayView(context: Context, private val snapshot: Bitmap)
   val snapshotWidth: Int get() = snapshot.width
   val snapshotHeight: Int get() = snapshot.height
 
+  // The path that took the snapshot.
+  val snapshotPath: CapturePath get() = WindowSnapshot.pathOf(snapshot)
+
+  // Height in px of the shape when the reveal starts.
+  val startHeightPx: Float get() = START_HEIGHT_DP * resources.displayMetrics.density
+
   init {
     isClickable = false
     isFocusable = false
@@ -51,9 +57,24 @@ internal class RevealOverlayView(context: Context, private val snapshot: Bitmap)
     this.shape = shape
     originX = x
     originY = y
-    fromScale = (START_HEIGHT_DP * resources.displayMetrics.density / shape.bounds.height()).toDouble()
+    fromScale = (startHeightPx / shape.bounds.height()).toDouble()
     toScale = Motion.coverScale(x, y, snapshot.width, snapshot.height, shape.effectiveInscribedRadius).toDouble()
     play(if (inverse) Mode.INVERSE_REVEAL else Mode.REVEAL, durationMs, onEnd)
+  }
+
+  // Debug only, slow: the snapshot's color at (x, y), read back to the CPU. Null if it can't be read.
+  fun pixelAt(x: Int, y: Int): Int? {
+    if (snapshot.isRecycled || x !in 0 until snapshot.width || y !in 0 until snapshot.height) return null
+    return try {
+      val copy = snapshot.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+      try {
+        copy.getPixel(x, y)
+      } finally {
+        copy.recycle()
+      }
+    } catch (_: RuntimeException) {
+      null
+    }
   }
 
   fun wipe(direction: WipeDirection, durationMs: Long, onEnd: () -> Unit) {

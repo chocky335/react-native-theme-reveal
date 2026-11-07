@@ -38,17 +38,36 @@ internal object WindowSnapshot {
   // immutable: PixelCopy can't copy into it, so it isn't kept. Main thread only.
   val kept = KeptBitmaps<Bitmap>(1, { it.width }, { it.height }, { it.isRecycled }, { it.isMutable }) { it.recycle() }
 
-  fun capture(activity: Activity, root: View?, handler: Handler, onResult: (Snapshot?) -> Unit) {
+  fun capture(activity: Activity, root: View?, handler: Handler, onResult: (Snapshot?) -> Unit) =
+    capture(activity, root, handler, false, null, onResult)
+
+  // The RenderThread reveal's second snapshot, API 29+: GPU capture only, into prepared if it's not null. Takes
+  // prepared and frees it, even when it doesn't use it. No PixelCopy fallback, since a PixelCopy would show the
+  // overlay. A failure gives null and doesn't turn off the GPU path: the next switch's first snapshot tests that path
+  // under its own rules.
+  fun captureSecond(activity: Activity, root: View?, handler: Handler, prepared: GpuOutput?, onResult: (Snapshot?) -> Unit) =
+    capture(activity, root, handler, true, prepared, onResult)
+
+  private fun capture(
+    activity: Activity,
+    root: View?,
+    handler: Handler,
+    gpuOnly: Boolean,
+    prepared: GpuOutput?,
+    onResult: (Snapshot?) -> Unit,
+  ) {
     val window = activity.window
     val decor = window?.decorView as? ViewGroup
     if (window == null || decor == null) {
+      releaseOutput(prepared)
       onResult(null)
       return
     }
     val screen = locationOf(decor)
     if (root == null || root === decor) {
       val pixelCopy = { done: (Bitmap?) -> Unit -> capture(window, decor.width, decor.height, handler, true, done) }
-      captureWindows(activity, decor, listOf(window), handler, { GpuSnapshot.drawWindow(it, decor) }, pixelCopy) {
+      val draw = { canvas: Canvas -> GpuSnapshot.drawWindow(canvas, decor) }
+      captureWindows(activity, decor, listOf(window), handler, draw, pixelCopy, gpuOnly, prepared) {
         onResult(it?.let { bitmap -> Snapshot(bitmap, decor, decor, 0, 0, screen[0], screen[1]) })
       }
       return
@@ -56,6 +75,7 @@ internal object WindowSnapshot {
     val dialog = findModalWindow(decor) { it.peekDecorView() === root }
     val dialogDecor = dialog?.peekDecorView() as? ViewGroup
     if (dialog == null || dialogDecor == null) {
+      releaseOutput(prepared)
       onResult(null)
       return
     }
@@ -105,7 +125,7 @@ internal object WindowSnapshot {
         done(back)
       }
     }
-    captureWindows(activity, decor, listOf(window, dialog), handler, draw, pixelCopy) {
+    captureWindows(activity, decor, listOf(window, dialog), handler, draw, pixelCopy, gpuOnly, prepared) {
       onResult(it?.let { bitmap -> Snapshot(bitmap, dialogDecor, decor, -dialogX, -dialogY, screen[0], screen[1]) })
     }
   }
@@ -114,8 +134,9 @@ internal object WindowSnapshot {
   var gpuOff = false
     private set
 
-  // Snapshot of windows, decor-sized, drawn on the GPU on API 29+. Read back with PixelCopy on API 26-28, for a
-  // wide color window, and when the GPU capture fails.
+  // Snapshot of windows, decor-sized, drawn on the GPU on API 29+. Read back with PixelCopy on API 26-28, for a wide
+  // color window, and when the GPU capture fails. gpuOnly (the second snapshot): null instead of PixelCopy, and a
+  // failure leaves gpuOff alone. prepared: see captureSecond.
   private fun captureWindows(
     activity: Activity,
     decor: View,
@@ -123,8 +144,12 @@ internal object WindowSnapshot {
     handler: Handler,
     draw: (Canvas) -> Unit,
     pixelCopy: ((Bitmap?) -> Unit) -> Unit,
+    gpuOnly: Boolean,
+    prepared: GpuOutput?,
     onResult: (Bitmap?) -> Unit,
   ) {
+    val noCopy = { done: (Bitmap?) -> Unit -> done(null) }
+    val fallback = if (gpuOnly) noCopy else pixelCopy
     val api = Build.VERSION.SDK_INT
     if (api >= Build.VERSION_CODES.Q) {
       val decors = windows.mapNotNull { it.peekDecorView() }
@@ -146,18 +171,75 @@ internal object WindowSnapshot {
         // Image arrives on the copy thread, where a warm-up pre-create can hold it back past the timeout.
         val busyAtStart = preCreates.busy
         val countAtStart = preCreates.count
-        GpuSnapshot.capture(decor.width, decor.height, light, dirty, handler, copyHandler, draw) { bitmap, failure ->
+        GpuSnapshot.capture(decor.width, decor.height, light, dirty, handler, copyHandler, draw, prepared) {
+            bitmap, failure ->
           if (bitmap != null) {
             onResult(bitmap)
             return@capture
           }
-          if (failure != null && preCreates.turnsGpuOff(failure, busyAtStart, countAtStart)) gpuOff = true
-          pixelCopy(onResult)
+          if (!gpuOnly && failure != null && preCreates.turnsGpuOff(failure, busyAtStart, countAtStart)) gpuOff = true
+          fallback(onResult)
         }
         return
       }
     }
-    pixelCopy(onResult)
+    releaseOutput(prepared)
+    fallback(onResult)
+  }
+
+  // Gets a GPU capture target of width x height ready on the copy thread (GpuSnapshot.prepareOutput). onReady gets it
+  // on handler, with the ms it took on the copy thread, or null if it failed. The caller frees it with releaseOutput or
+  // hands it to captureSecond. Main thread.
+  fun prepareOutput(width: Int, height: Int, handler: Handler, onReady: (GpuOutput?, Double) -> Unit) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || width <= 0 || height <= 0) {
+      onReady(null, 0.0)
+      return
+    }
+    copyHandler.post {
+      val start = System.nanoTime()
+      val output = try {
+        GpuSnapshot.prepareOutput(width, height, copyHandler)
+      } catch (_: RuntimeException) {
+        null
+      } catch (_: OutOfMemoryError) {
+        // HardwareRenderer throws it when HWUI can't make its native proxy.
+        null
+      }
+      val ms = (System.nanoTime() - start) / 1e6
+      handler.post { onReady(output, ms) }
+    }
+  }
+
+  // Frees a target from prepareOutput. Main thread.
+  fun releaseOutput(prepared: GpuOutput?) {
+    if (prepared != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) prepared.release()
+  }
+
+  // Pre-imports a held GPU snapshot's texture on the copy thread (GpuSnapshot.preImport). Failures are ignored: the
+  // overlay's first frame imports it as before. Main thread.
+  fun preImport(bitmap: Bitmap) {
+    val api = Build.VERSION.SDK_INT
+    // Same API check again, in a form lint understands.
+    if (api < Build.VERSION_CODES.Q || bitmap.isRecycled || !RevealPlan.preImports(api, pathOf(bitmap))) return
+    val node = try {
+      GpuSnapshot.preImportNode(bitmap)
+    } catch (_: RuntimeException) {
+      return
+    }
+    copyHandler.post {
+      val start = System.nanoTime()
+      try {
+        GpuSnapshot.preImport(node)
+      } catch (_: RuntimeException) {
+        return@post
+      } catch (_: OutOfMemoryError) {
+        // HardwareRenderer throws it when HWUI can't make its native proxy.
+        return@post
+      }
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(TAG, "pre-imported the held snapshot in %.1f ms".format((System.nanoTime() - start) / 1e6))
+      }
+    }
   }
 
   // The path that took a snapshot: a GPU capture gives a hardware bitmap.

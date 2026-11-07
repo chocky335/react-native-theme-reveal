@@ -24,6 +24,16 @@ internal object Motion {
 
   fun shrink(g: Double, from: Double, to: Double): Double = max(0.0, growth(1 - g, from, to) - from * g)
 
+  // For an animator whose radius runs from r0 to r1 as r0 + (r1 - r0) * fraction: the fraction that gives growth's
+  // radius at time g. r1 > r0 > 0.
+  fun growthFraction(g: Double, r0: Double, r1: Double): Double =
+    ((growth(g.coerceIn(0.0, 1.0), r0, r1) - r0) / (r1 - r0)).coerceIn(0.0, 1.0)
+
+  // For an animator whose radius runs from r1 to 0 as r1 * (1 - fraction): the fraction that gives shrink's radius
+  // at time g. r1 > r0 > 0.
+  fun shrinkFraction(g: Double, r0: Double, r1: Double): Double =
+    (1 - shrink(g.coerceIn(0.0, 1.0), r0, r1) / r1).coerceIn(0.0, 1.0)
+
   fun coverScale(originX: Float, originY: Float, width: Int, height: Int, inscribedRadiusPx: Float): Float =
     hypot(max(originX, width - originX), max(originY, height - originY)) / inscribedRadiusPx
 

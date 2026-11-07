@@ -1,5 +1,8 @@
 package expo.modules.themereveal
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.TimeInterpolator
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.ComponentCallbacks2
@@ -13,6 +16,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
 import android.view.View
+import android.view.ViewAnimationUtils
 import android.view.ViewGroup
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -20,10 +24,20 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import kotlin.math.roundToInt
 
 // Overlay has to stay the size of cover. The React root the origin comes from sits at (rootX, rootY) on screen, the
-// overlay at (screenX, screenY).
-private class OverlayGeometry(val cover: View, val rootX: Int, val rootY: Int, val screenX: Int, val screenY: Int)
+// overlay at (screenX, screenY). host is the view whose ViewOverlay holds the overlay, the window root the snapshot
+// shows, in activity's window.
+private class OverlayGeometry(
+  val cover: View,
+  val rootX: Int,
+  val rootY: Int,
+  val screenX: Int,
+  val screenY: Int,
+  val host: ViewGroup,
+  val activity: Activity,
+)
 
 // Snapshot from capture(), kept out of the window until prepare() attaches it. root is the window root it shows,
 // generation the prepare generation when the capture started.
@@ -52,6 +66,12 @@ class ThemeRevealModule : Module() {
   private var pendingCapture: PendingCapture? = null
   private var captureTicket = 0
   private val captureExpiry = Runnable { voidCapture("expired") }
+
+  // RenderThread reveal: the wait for its second snapshot, the view showing that snapshot, and the animator on the
+  // RenderThread (reveal or inverse reveal).
+  private var secondSnapshot: SecondSnapshot? = null
+  private var secondView: RevealOverlayView? = null
+  private var renderThreadAnimator: Animator? = null
 
   // Frees the kept bitmaps when the app is hidden or low on memory, or the screen changes size. Runs on main.
   private val memoryCallbacks = object : ComponentCallbacks2 {
@@ -193,6 +213,9 @@ class ThemeRevealModule : Module() {
       snapshot.bitmap.prepareToDraw()
       held = HeldCapture(ticket, gen, activity, root, snapshot, SystemClock.uptimeMillis())
       debug("held a capture: ${WindowSnapshot.pathOf(snapshot.bitmap).js}")
+      // A GPU snapshot's texture is imported on the RenderThread at its first draw, i.e. the overlay's first frame.
+      // Do it now, during the hold.
+      WindowSnapshot.preImport(snapshot.bitmap)
       mainHandler.postDelayed(captureExpiry, CaptureRules.TIMEOUT_MS)
       promise.resolve(true)
     }
@@ -263,7 +286,15 @@ class ThemeRevealModule : Module() {
       view.layout(snapshot.hostX, snapshot.hostY, snapshot.hostX + bitmap.width, snapshot.hostY + bitmap.height)
       val rootAt = WindowSnapshot.locationOf(reactRoot)
       overlay = view
-      geometry = OverlayGeometry(snapshot.cover, rootAt[0], rootAt[1], snapshot.screenX, snapshot.screenY)
+      geometry = OverlayGeometry(
+        snapshot.cover,
+        rootAt[0],
+        rootAt[1],
+        snapshot.screenX,
+        snapshot.screenY,
+        snapshot.host,
+        activity,
+      )
       mainHandler.postDelayed(failsafe, FAILSAFE_MS)
       // Any capture held or running right now shows the screen from before this switch.
       voidCapture("switch attached")
@@ -324,6 +355,7 @@ class ThemeRevealModule : Module() {
       return
     }
     mainHandler.removeCallbacks(failsafe)
+    clearRenderThreadReveal()
     started?.resolve()
     started = promise
     val cover = geometry?.cover
@@ -358,7 +390,24 @@ class ThemeRevealModule : Module() {
           space.screenX,
           space.screenY,
         )
-        view.reveal(shapeOf(transition.shape), point[0], point[1], transition.type == "inverseReveal", durationMs, onEnd)
+        val x = point[0]
+        val y = point[1]
+        val path = RevealPlan.path(
+          transition.type,
+          transition.shape != null,
+          Build.VERSION.SDK_INT,
+          view.snapshotPath,
+          animatorsEnabled(),
+        )
+        when (path) {
+          RevealPath.RENDER_THREAD_REVEAL -> {
+            revealOnRenderThread(view, space, x, y, durationMs, onEnd)
+            return true
+          }
+          RevealPath.RENDER_THREAD_INVERSE -> if (inverseRevealOnRenderThread(view, x, y, durationMs, onEnd)) return true
+          RevealPath.UI_THREAD -> Unit
+        }
+        view.reveal(shapeOf(transition.shape), x, y, transition.type == "inverseReveal", durationMs, onEnd)
       }
       "wipe" -> view.wipe(wipeDirectionOf(transition.direction) ?: return false, durationMs, onEnd)
       "crossfade" -> view.crossfade(durationMs, onEnd)
@@ -367,8 +416,254 @@ class ThemeRevealModule : Module() {
     return true
   }
 
+  // Circle reveal on the RenderThread. The overlay stays still while the next frame draws React Native's mount of the new
+  // theme. In the frame after that frame's commit, a second GPU snapshot of the same window(s), minus the overlay, goes
+  // into a second overlay view above the first, and a circular reveal clip grows on it. If that fails, the UI-thread
+  // reveal runs instead (SecondSnapshotWait).
+  private fun revealOnRenderThread(
+    view: RevealOverlayView,
+    space: OverlayGeometry,
+    x: Float,
+    y: Float,
+    durationMs: Long,
+    onEnd: () -> Unit,
+  ) {
+    val run = SecondSnapshot(view, space, x, y, durationMs, onEnd)
+    secondSnapshot = run
+    run.begin()
+  }
+
+  // Inverse circle reveal on the RenderThread: a circular reveal clip on the overlay itself, from the cover radius
+  // down to 0. No second snapshot. False if it can't start, and then the caller runs the UI-thread one.
+  private fun inverseRevealOnRenderThread(
+    view: RevealOverlayView,
+    x: Float,
+    y: Float,
+    durationMs: Long,
+    onEnd: () -> Unit,
+  ): Boolean {
+    val radii = RevealPlan.circleRadii(x, y, view.snapshotWidth, view.snapshotHeight, view.startHeightPx)
+    val r0 = radii[0]
+    val r1 = radii[1]
+    if (!RevealPlan.radiiUsable(r0, r1)) return false
+    try {
+      startCircularReveal(view, x, y, r1, 0f, ShrinkInterpolator(r0, r1), durationMs, onEnd)
+    } catch (_: RuntimeException) {
+      clearRenderThreadReveal()
+      return false
+    }
+    debug("inverse reveal runs on the RenderThread")
+    return true
+  }
+
+  private fun startCircularReveal(
+    view: View,
+    x: Float,
+    y: Float,
+    from: Float,
+    to: Float,
+    curve: TimeInterpolator,
+    durationMs: Long,
+    onEnd: () -> Unit,
+  ) {
+    val animator = ViewAnimationUtils.createCircularReveal(view, x.roundToInt(), y.roundToInt(), from, to)
+    animator.duration = durationMs
+    animator.interpolator = curve
+    animator.addListener(object : AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: Animator) = onEnd()
+    })
+    renderThreadAnimator = animator
+    animator.start()
+  }
+
+  // Shows the second snapshot above the overlay and grows a circular reveal clip on it, on the RenderThread. Null if it
+  // runs, otherwise the reason it doesn't. Frees the snapshot if it doesn't use it.
+  private fun revealSecond(
+    view: RevealOverlayView,
+    space: OverlayGeometry,
+    x: Float,
+    y: Float,
+    durationMs: Long,
+    onEnd: () -> Unit,
+    snapshot: Snapshot,
+  ): String? {
+    val bitmap = snapshot.bitmap
+    if (overlay !== view || !view.isAttachedToWindow || snapshot.host !== space.host ||
+      WindowSnapshot.pathOf(bitmap) != CapturePath.GPU ||
+      !Motion.sameSize(bitmap.width, bitmap.height, view.snapshotWidth, view.snapshotHeight)
+    ) {
+      WindowSnapshot.kept.give(bitmap)
+      return "the second snapshot doesn't match the first"
+    }
+    val radii = RevealPlan.circleRadii(x, y, view.snapshotWidth, view.snapshotHeight, view.startHeightPx)
+    val r0 = radii[0]
+    val r1 = radii[1]
+    if (!RevealPlan.radiiUsable(r0, r1)) {
+      WindowSnapshot.kept.give(bitmap)
+      return "radii $r0 to $r1"
+    }
+    val next = RevealOverlayView(view.context, bitmap)
+    // Second view owns the bitmap from here on: clearRenderThreadReveal frees it.
+    secondView = next
+    try {
+      space.host.overlay.add(next)
+      next.layout(view.left, view.top, view.right, view.bottom)
+      startCircularReveal(next, x, y, r0, r1, GrowthInterpolator(r0, r1), durationMs, onEnd)
+    } catch (_: RuntimeException) {
+      clearRenderThreadReveal()
+      return "cannot start the circular reveal"
+    }
+    if (Log.isLoggable(TAG, Log.DEBUG)) probe(view, next, x, y)
+    return null
+  }
+
+  // Debug only, slow: reads one pixel of both snapshots away from the press, to show the second one has the new theme.
+  private fun probe(old: RevealOverlayView, next: RevealOverlayView, x: Float, y: Float) {
+    val w = old.snapshotWidth
+    val h = old.snapshotHeight
+    val px = (if (x < w / 2f) w * 0.9f else w * 0.1f).toInt()
+    val py = (if (y < h / 2f) h * 0.9f else h * 0.1f).toInt()
+    val before = old.pixelAt(px, py)
+    val after = next.pixelAt(px, py)
+    val hex = { color: Int? -> color?.let { "#%08x".format(it) } ?: "none" }
+    Log.d(TAG, "second snapshot probe at ($px, $py): old ${hex(before)}, new ${hex(after)}, differs ${before != after}")
+  }
+
+  // Stops the RenderThread reveal: the wait for the second snapshot (its callbacks and prepared target), the animator,
+  // and the second view with its bitmap.
+  private fun clearRenderThreadReveal() {
+    secondSnapshot?.wait?.cancel()
+    secondSnapshot = null
+    renderThreadAnimator?.let {
+      it.removeAllListeners()
+      it.cancel()
+    }
+    renderThreadAnimator = null
+    val next = secondView ?: return
+    secondView = null
+    (next.parent as? ViewGroup)?.removeView(next)
+    next.release(WindowSnapshot.kept::give)
+  }
+
+  // One RenderThread reveal's wait for its second snapshot (SecondSnapshotWait): the frame callbacks, the commit
+  // callback, the timeout and the target prepared for the capture. Main thread only.
+  private inner class SecondSnapshot(
+    private val view: RevealOverlayView,
+    private val space: OverlayGeometry,
+    private val x: Float,
+    private val y: Float,
+    private val durationMs: Long,
+    private val onEnd: () -> Unit,
+  ) : SecondSnapshotSteps<Snapshot> {
+    val wait = SecondSnapshotWait(this)
+    private val startedAt = SystemClock.uptimeMillis()
+
+    // Capture's target, from when it's ready until the capture takes it.
+    private var output: GpuOutput? = null
+    private val frame = Choreographer.FrameCallback { wait.frame(windowOk()) }
+
+    // One-shot. Nothing unregisters it, and after the wait ends it does nothing.
+    private val commit = Runnable {
+      if (wait.state == WaitState.WAITING_FOR_COMMIT) debug("frame commit after ${sinceStart()} ms")
+      wait.commit(windowOk())
+    }
+
+    // React Native's frame callbacks for this frame (mount dispatch, timers, the JS rAF tick) were posted before this
+    // one, so they run first.
+    private val captureFrame = Choreographer.FrameCallback { wait.captureFrame(windowOk()) }
+    private val timeout = Runnable { wait.timeout() }
+
+    // Starts the wait. The capture's target is made ready now, while JS renders the theme.
+    fun begin() {
+      WindowSnapshot.prepareOutput(view.snapshotWidth, view.snapshotHeight, mainHandler) { prepared, ms ->
+        val used = wait.beforeCapture
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+          Log.d(
+            TAG,
+            "prepared the second snapshot's target after %d ms, %.1f ms on the copy thread: %b, used %b".format(
+              sinceStart(),
+              ms,
+              prepared != null,
+              used && prepared != null,
+            ),
+          )
+        }
+        if (used) output = prepared else WindowSnapshot.releaseOutput(prepared)
+      }
+      Choreographer.getInstance().postFrameCallback(frame)
+      mainHandler.postDelayed(timeout, SecondSnapshotWait.TIMEOUT_MS)
+    }
+
+    private fun sinceStart() = SystemClock.uptimeMillis() - startedAt
+
+    private fun windowOk(): Boolean {
+      val activity = space.activity
+      return overlay === view && !activity.isFinishing && !activity.isDestroyed && space.host.isAttachedToWindow &&
+        view.isAttachedToWindow
+    }
+
+    override fun registerCommit(): Boolean {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+      return try {
+        // If this frame's traversal draws nothing, no commit comes and the timeout falls back.
+        space.host.viewTreeObserver.registerFrameCommitCallback(commit)
+        true
+      } catch (_: IllegalStateException) {
+        // A dead ViewTreeObserver.
+        false
+      }
+    }
+
+    override fun postCaptureFrame() = Choreographer.getInstance().postFrameCallback(captureFrame)
+
+    override fun capture() {
+      val prepared = output
+      output = null
+      val start = System.nanoTime()
+      // Window without the overlay: hidden only while the capture records the window, on this thread.
+      view.visibility = View.INVISIBLE
+      try {
+        WindowSnapshot.captureSecond(space.activity, space.host, mainHandler, prepared) { snapshot ->
+          debug("second snapshot result after ${sinceStart()} ms: ${snapshot != null}")
+          wait.result(snapshot)
+        }
+      } finally {
+        view.visibility = View.VISIBLE
+      }
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(
+          TAG,
+          "second snapshot frame after %d ms, capture %.1f ms on main, prepared target %b".format(
+            sinceStart(),
+            (System.nanoTime() - start) / 1e6,
+            prepared != null,
+          ),
+        )
+      }
+    }
+
+    override fun reveal(bitmap: Snapshot): String? = revealSecond(view, space, x, y, durationMs, onEnd, bitmap)
+
+    override fun fallBack(reason: String) {
+      debug("RenderThread reveal falls back to the UI-thread reveal: $reason")
+      if (overlay === view) view.reveal(ShapePath.circle(), x, y, false, durationMs, onEnd)
+    }
+
+    override fun release() {
+      if (secondSnapshot === this) secondSnapshot = null
+      Choreographer.getInstance().removeFrameCallback(frame)
+      Choreographer.getInstance().removeFrameCallback(captureFrame)
+      mainHandler.removeCallbacks(timeout)
+      WindowSnapshot.releaseOutput(output)
+      output = null
+    }
+
+    override fun free(bitmap: Snapshot) = WindowSnapshot.kept.give(bitmap.bitmap)
+  }
+
   private fun removeOverlay() {
     mainHandler.removeCallbacks(failsafe)
+    clearRenderThreadReveal()
     started?.resolve()
     started = null
     val view = overlay ?: return

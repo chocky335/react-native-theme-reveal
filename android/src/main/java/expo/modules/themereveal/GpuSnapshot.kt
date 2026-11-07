@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.ColorSpace
 import android.graphics.HardwareRenderer
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.RenderNode
 import android.hardware.HardwareBuffer
 import android.media.ImageReader
@@ -19,6 +20,25 @@ import androidx.annotation.RequiresApi
 
 // Elevation shadows: where the light is and how dark its shadows are.
 internal class Lighting(val source: LightSource, val ambientAlpha: Float, val spotAlpha: Float)
+
+// GPU capture target made ready ahead of the capture (GpuSnapshot.prepareOutput): its reader, its renderer with the
+// surface already made, and its root node. release frees it, once, on main, unless a capture took it.
+@RequiresApi(Build.VERSION_CODES.Q)
+internal class GpuOutput(
+  val width: Int,
+  val height: Int,
+  val reader: ImageReader,
+  val renderer: HardwareRenderer,
+  val node: RenderNode,
+  private val readerHandler: Handler,
+) {
+  fun release() {
+    renderer.destroy()
+    // On the reader's own thread, so the close can't free an image the listener is still reading.
+    readerHandler.post { reader.close() }
+    node.discardDisplayList()
+  }
+}
 
 // API 29+: window snapshot drawn on the GPU into a hardware bitmap. No readback to the CPU and no upload back to the
 // GPU like PixelCopy needs.
@@ -107,6 +127,90 @@ internal object GpuSnapshot {
     }
   }
 
+  // Target side of pre-importing a held snapshot.
+  private const val PRE_IMPORT_SIZE = 8
+
+  // Records the snapshot, drawn scaled down, into a tiny node. Runs on the UI thread so freeing the bitmap can't
+  // race the recording. The display list keeps the bitmap's buffer alive until preImport discards it. Draws no
+  // view.
+  fun preImportNode(bitmap: Bitmap): RenderNode {
+    val node = RenderNode("ThemeRevealPreImport")
+    try {
+      node.setPosition(0, 0, PRE_IMPORT_SIZE, PRE_IMPORT_SIZE)
+      val canvas = node.beginRecording(PRE_IMPORT_SIZE, PRE_IMPORT_SIZE)
+      try {
+        canvas.drawBitmap(bitmap, null, Rect(0, 0, PRE_IMPORT_SIZE, PRE_IMPORT_SIZE), null)
+      } finally {
+        node.endRecording()
+      }
+    } catch (thrown: RuntimeException) {
+      node.discardDisplayList()
+      throw thrown
+    }
+    return node
+  }
+
+  // Draws the node into a tiny offscreen target and waits for the frame, then frees target and node. The shared
+  // RenderThread imports the snapshot's buffer as a texture now, during the hold, instead of in the overlay's first
+  // frame. Draws no view, so it runs off main.
+  fun preImport(node: RenderNode) {
+    var images: ImageReader? = null
+    var renderer: HardwareRenderer? = null
+    try {
+      val reader = ImageReader.newInstance(PRE_IMPORT_SIZE, PRE_IMPORT_SIZE, PixelFormat.RGBA_8888, 1, USAGE)
+      images = reader
+      val output = HardwareRenderer()
+      renderer = output
+      output.setSurface(reader.surface)
+      output.setContentRoot(node)
+      output.setOpaque(false)
+      output.setLightSourceGeometry(0f, 0f, 1f, 1f)
+      output.setLightSourceAlpha(0f, 0f)
+      output.createRenderRequest().syncAndDraw()
+      // Waits until the frame is drawn.
+      output.stop()
+      reader.acquireLatestImage()?.close()
+    } finally {
+      renderer?.destroy()
+      images?.close()
+      node.discardDisplayList()
+    }
+  }
+
+  // Gets a width x height capture target ready for a later capture: draws one empty frame into it and waits for that
+  // frame, so the surface exists on the RenderThread and its buffer is allocated. The capture's frame reuses that
+  // buffer. Draws no view, so it runs off main, on readerHandler's thread. The renderer stays started, since stop()
+  // would let its surface go.
+  fun prepareOutput(width: Int, height: Int, readerHandler: Handler): GpuOutput {
+    val node = RenderNode("ThemeRevealSnapshot")
+    var images: ImageReader? = null
+    var renderer: HardwareRenderer? = null
+    try {
+      val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1, USAGE)
+      images = reader
+      node.setPosition(0, 0, width, height)
+      node.beginRecording(width, height)
+      node.endRecording()
+      val output = HardwareRenderer()
+      renderer = output
+      output.setSurface(reader.surface)
+      output.setContentRoot(node)
+      output.setOpaque(false)
+      output.setLightSourceGeometry(0f, 0f, 1f, 1f)
+      output.setLightSourceAlpha(0f, 0f)
+      // Waits until the frame is presented, so its image is already in the reader.
+      output.createRenderRequest().setWaitForPresent(true).syncAndDraw()
+      // Back to the reader, so the capture's frame dequeues this buffer again.
+      reader.acquireNextImage()?.close()
+      return GpuOutput(width, height, reader, output, node, readerHandler)
+    } catch (thrown: Throwable) {
+      renderer?.destroy()
+      images?.close()
+      node.discardDisplayList()
+      throw thrown
+    }
+  }
+
   // Force dark can darken this activity's windows (see CapturePlan.forceDarkCanApply).
   fun forceDarkCanApply(activity: Activity): Boolean {
     val value = TypedValue()
@@ -120,7 +224,9 @@ internal object GpuSnapshot {
 
   // Records draw on the UI thread, renders it into a hardware buffer and calls onResult once on handler, with the
   // bitmap or with null and the reason. readerHandler gets the image, since taking it waits for the GPU to finish.
-  // redraw lists the decor views of windows that had a view change waiting for its frame.
+  // redraw lists the decor views of windows that had a view change waiting for its frame. prepared: a target from
+  // prepareOutput, made with the same readerHandler, to draw into instead of a new one. The capture takes it and frees
+  // it when done. One of another size is freed right away.
   fun capture(
     width: Int,
     height: Int,
@@ -129,18 +235,25 @@ internal object GpuSnapshot {
     handler: Handler,
     readerHandler: Handler,
     draw: (Canvas) -> Unit,
+    prepared: GpuOutput?,
     onResult: (Bitmap?, GpuFailure?) -> Unit,
   ) {
-    val node = RenderNode("ThemeRevealSnapshot")
+    val ready = prepared?.takeIf { it.width == width && it.height == height }
+    if (prepared != null && ready == null) prepared.release()
+    val node = ready?.node ?: RenderNode("ThemeRevealSnapshot")
     var reader: ImageReader? = null
     var renderer: HardwareRenderer? = null
     lateinit var timeout: Runnable
     val end = CaptureEnd<Bitmap>(
       release = {
-        renderer?.destroy()
-        // On the reader's own thread, so the close can't free an image the listener is still reading.
-        reader?.let { images -> readerHandler.post { images.close() } }
-        node.discardDisplayList()
+        if (ready != null) {
+          ready.release()
+        } else {
+          renderer?.destroy()
+          // On the reader's own thread, so the close can't free an image the listener is still reading.
+          reader?.let { images -> readerHandler.post { images.close() } }
+          node.discardDisplayList()
+        }
       },
       recycle = { it.recycle() },
       cancelTimeout = { handler.removeCallbacks(timeout) },
@@ -155,7 +268,7 @@ internal object GpuSnapshot {
       } finally {
         node.endRecording()
       }
-      val images = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1, USAGE)
+      val images = ready?.reader ?: ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1, USAGE)
       reader = images
       images.setOnImageAvailableListener({ source ->
         val bitmap = try {
@@ -168,11 +281,13 @@ internal object GpuSnapshot {
         // Front of the queue, like the PixelCopy listener, so the overlay can still make a frame that's due.
         handler.postAtFrontOfQueue { end.image(bitmap) }
       }, readerHandler)
-      val output = HardwareRenderer()
+      val output = ready?.renderer ?: HardwareRenderer()
       renderer = output
-      output.setSurface(images.surface)
-      output.setContentRoot(node)
-      output.setOpaque(false)
+      if (ready == null) {
+        output.setSurface(images.surface)
+        output.setContentRoot(node)
+        output.setOpaque(false)
+      }
       output.setLightSourceGeometry(light.source.x, light.source.y, light.source.z, light.source.radius)
       output.setLightSourceAlpha(light.ambientAlpha, light.spotAlpha)
       val result = output.createRenderRequest().syncAndDraw()

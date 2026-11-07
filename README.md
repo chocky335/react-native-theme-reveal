@@ -453,6 +453,36 @@ The overlay lives in the `ViewOverlay` of the window's root view, in the activit
 modal, the dialog window. It draws above every view of that window, including any view the app or the system adds
 during the animation. It takes no touches and is hidden from accessibility.
 
+### Circle reveal on the RenderThread
+
+On API 29 and up, the default circle (`reveal` or `inverseReveal` with no `shape`) animates on the RenderThread with
+`ViewAnimationUtils.createCircularReveal`, so the UI thread doesn't redraw the overlay every frame.
+- `reveal`: the overlay holds still while the next frame draws the new theme. In the frame after that, the package
+  takes a second GPU snapshot of the same window or windows, this time without the overlay. That second snapshot
+  goes on top of the first, and a circular clip on it grows from the origin.
+- `inverseReveal`: a circular clip on the first snapshot shrinks into the origin. There's no second snapshot.
+- Both follow the same radius curve as the UI-thread reveal (see [Transitions](#transitions)).
+
+For `reveal`, this changes what you see:
+- Inside the circle you get a still image of the new screen for the length of the reveal, where before it showed
+  the live app. An animation or a video in your app won't move inside the circle until the reveal ends.
+- The circle starts about 2 frames after `start`, once the second snapshot is in. The reveal keeps its duration,
+  so it also ends that much later.
+
+The UI-thread reveal still runs:
+- on API 26 to 28,
+- when the first snapshot came from `PixelCopy` (see the list above),
+- when the transition has a custom `shape`,
+- for one switch, when the second snapshot doesn't come: no frame commit, no result within 200 ms of `start`, a
+  failed GPU capture, or a result for another window or size. The UI-thread reveal then starts at that point, with
+  the full duration. A failed second snapshot doesn't turn the GPU snapshot off,
+- for one switch, when the RenderThread animator doesn't start.
+
+`wipe` and `crossfade` always run on the UI thread.
+
+During a press-in hold on API 29 and up, the package also draws the held GPU snapshot once, scaled down, into a
+small offscreen target. That moves the upload of its texture out of the overlay's first frame.
+
 ## Modals
 
 A switch from inside a React Native `<Modal>` animates too.
@@ -563,6 +593,12 @@ run took, and that change adds one check to each capture. I haven't measured it.
 live in [`benchmark/`](benchmark/), and the full tables, the history and the notes are in
 [`benchmark/RESULTS.md`](benchmark/RESULTS.md).
 
+These numbers are from before the [circle reveal on the RenderThread](#circle-reveal-on-the-renderthread). In
+them the reveal ran on the UI thread, and the inside of the circle showed the live app. Now, on API 29 and up, the
+circle reveal runs on the RenderThread from a second snapshot, so the inside of the circle is a still image of the
+new screen for the reveal's 450 ms. The UI-thread reveal still runs on API 26 to 28, for a `PixelCopy` snapshot,
+for a custom shape, and for one switch when the second snapshot fails.
+
 Everything runs in one build of the example app, on the same screen, with a 450 ms circle reveal:
 - `ours`: this package.
 - `theme-switch-animation`: `react-native-theme-switch-animation` 0.8.0.
@@ -637,7 +673,7 @@ I measured the cause with a system trace and `gfxinfo`. Ours animates the reveal
 full-window snapshot in every frame. `theme-switch-animation` uses a RenderThread animator, which skips a vsync
 when the UI thread is busy instead of drawing a slow frame. In the hold form the GPU also goes idle after the
 press-in snapshot, so the first frames after the release cost 2-3 times what they do in the tap form. Moving the
-reveal to the RenderThread is the only lever left, and I haven't built it yet.
+reveal to the RenderThread was the only lever left. It's built now, but these tables don't measure it.
 
 Janky share on the Pixel 8 Pro fails in the warm hold: 3.4% vs 3.2% for `theme-switch-animation` [3.39%]. It
 failed in the run before as well (5% vs 3%). Both medians are 1 janky frame, but ours draws 29 frames in the window
