@@ -13,7 +13,18 @@ class RevealPlanTest {
     apiLevel: Int = 33,
     snapshot: CapturePath = CapturePath.GPU,
     animatorsEnabled: Boolean = true,
-  ) = RevealPlan.path(type, customShape, apiLevel, snapshot, animatorsEnabled)
+    secondSnapshotOff: Boolean = false,
+  ) = RevealPlan.path(type, customShape, apiLevel, snapshot, animatorsEnabled, secondSnapshotOff)
+
+  private fun matches(
+    sameOverlay: Boolean = true,
+    attached: Boolean = true,
+    sameHost: Boolean = true,
+    gpu: Boolean = true,
+    width: Int = 1080,
+    height: Int = 2400,
+    sameOffset: Boolean = true,
+  ) = RevealPlan.secondMatches(sameOverlay, attached, sameHost, gpu, width, height, 1080, 2400, sameOffset)
 
   @Test
   fun theDefaultCircleFromAGpuSnapshotRunsOnTheRenderThread() {
@@ -45,6 +56,52 @@ class RevealPlanTest {
   fun disabledAnimatorsKeepTheUiThread() {
     assertEquals(RevealPath.UI_THREAD, path("reveal", animatorsEnabled = false))
     assertEquals(RevealPath.UI_THREAD, path("inverseReveal", animatorsEnabled = false))
+  }
+
+  @Test
+  fun aRevealTurnedOffAfterFallbacksKeepsTheUiThread() {
+    assertEquals(RevealPath.UI_THREAD, path("reveal", secondSnapshotOff = true))
+    // The inverse reveal takes no second snapshot.
+    assertEquals(RevealPath.RENDER_THREAD_INVERSE, path("inverseReveal", secondSnapshotOff = true))
+  }
+
+  @Test
+  fun aSecondSnapshotOfTheSameWindowSizeAndPlaceMatches() {
+    assertTrue(matches())
+  }
+
+  @Test
+  fun aSecondSnapshotMatchesOnlyTheSameOverlayStillInTheWindow() {
+    assertFalse(matches(sameOverlay = false))
+    assertFalse(matches(attached = false))
+  }
+
+  @Test
+  fun aSecondSnapshotOfAnotherWindowOrPathDoesNotMatch() {
+    assertFalse(matches(sameHost = false))
+    assertFalse(matches(gpu = false))
+  }
+
+  @Test
+  fun aSecondSnapshotOfAnotherSizeDoesNotMatch() {
+    assertFalse(matches(width = 1079))
+    assertFalse(matches(height = 2300))
+    assertFalse(matches(width = 2400, height = 1080))
+  }
+
+  @Test
+  fun aSecondSnapshotAtAnotherOffsetDoesNotMatch() {
+    // A dialog that moved during the wait (the IME, say).
+    assertFalse(matches(sameOffset = false))
+  }
+
+  @Test
+  fun aFallBackCountsOnlyInAnOpenResumedWindow() {
+    assertTrue(RevealPlan.countsFallBack(windowOk = true, resumed = true))
+    // App went to the background during the wait, so no frame came.
+    assertFalse(RevealPlan.countsFallBack(windowOk = true, resumed = false))
+    // The overlay or its window went away.
+    assertFalse(RevealPlan.countsFallBack(windowOk = false, resumed = true))
   }
 
   @Test

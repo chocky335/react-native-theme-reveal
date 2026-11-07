@@ -39,6 +39,14 @@ private class OverlayGeometry(
   val activity: Activity,
 )
 
+// Frame-commit callback that release can empty: nothing unregisters one, and the window holds on to it until its
+// next commit.
+private class CommitRelay(var target: (() -> Unit)?) : Runnable {
+  override fun run() {
+    target?.invoke()
+  }
+}
+
 // Snapshot from capture(), kept out of the window until prepare() attaches it. root is the window root it shows,
 // generation the prepare generation when the capture started.
 private class HeldCapture(
@@ -215,7 +223,7 @@ class ThemeRevealModule : Module() {
       debug("held a capture: ${WindowSnapshot.pathOf(snapshot.bitmap).js}")
       // A GPU snapshot's texture is imported on the RenderThread at its first draw, i.e. the overlay's first frame.
       // Do it now, during the hold.
-      WindowSnapshot.preImport(snapshot.bitmap)
+      WindowSnapshot.preImport(snapshot.bitmap, mainHandler)
       mainHandler.postDelayed(captureExpiry, CaptureRules.TIMEOUT_MS)
       promise.resolve(true)
     }
@@ -355,9 +363,16 @@ class ThemeRevealModule : Module() {
       return
     }
     mainHandler.removeCallbacks(failsafe)
-    clearRenderThreadReveal()
     started?.resolve()
     started = promise
+    // A start while an earlier start's RenderThread animator is still running on this overlay ends the switch right
+    // away. A cancelled RevealAnimator clears its view's reveal clip later, which would break the next animation
+    // for a frame.
+    if (renderThreadAnimator != null) {
+      removeOverlay()
+      return
+    }
+    clearRenderThreadReveal()
     val cover = geometry?.cover
     val durationMs = Motion.durationMs(transition.durationMs)
     // A modal closing between prepare and start detaches the overlay, so resolve right away.
@@ -368,6 +383,8 @@ class ThemeRevealModule : Module() {
       return
     }
     val onEnd = { if (overlay === view) removeOverlay() }
+    // Second start on the same overlay: the first one's animation stops here.
+    view.still()
     val playing = try {
       play(view, transition, durationMs, onEnd)
     } catch (_: RuntimeException) {
@@ -398,6 +415,7 @@ class ThemeRevealModule : Module() {
           Build.VERSION.SDK_INT,
           view.snapshotPath,
           animatorsEnabled(),
+          fallbacks.off,
         )
         when (path) {
           RevealPath.RENDER_THREAD_REVEAL -> {
@@ -474,6 +492,10 @@ class ThemeRevealModule : Module() {
     })
     renderThreadAnimator = animator
     animator.start()
+    // A RenderThread animator doesn't advance while the window isn't drawing, so the overlay is removed then at the
+    // latest.
+    mainHandler.removeCallbacks(failsafe)
+    mainHandler.postDelayed(failsafe, durationMs + FAILSAFE_MS)
   }
 
   // Shows the second snapshot above the overlay and grows a circular reveal clip on it, on the RenderThread. Null if it
@@ -488,10 +510,18 @@ class ThemeRevealModule : Module() {
     snapshot: Snapshot,
   ): String? {
     val bitmap = snapshot.bitmap
-    if (overlay !== view || !view.isAttachedToWindow || snapshot.host !== space.host ||
-      WindowSnapshot.pathOf(bitmap) != CapturePath.GPU ||
-      !Motion.sameSize(bitmap.width, bitmap.height, view.snapshotWidth, view.snapshotHeight)
-    ) {
+    val matches = RevealPlan.secondMatches(
+      overlay === view,
+      view.isAttachedToWindow,
+      snapshot.host === space.host,
+      WindowSnapshot.pathOf(bitmap) == CapturePath.GPU,
+      bitmap.width,
+      bitmap.height,
+      view.snapshotWidth,
+      view.snapshotHeight,
+      snapshot.hostX == view.left && snapshot.hostY == view.top,
+    )
+    if (!matches) {
       WindowSnapshot.kept.give(bitmap)
       return "the second snapshot doesn't match the first"
     }
@@ -560,10 +590,16 @@ class ThemeRevealModule : Module() {
 
     // Capture's target, from when it's ready until the capture takes it.
     private var output: GpuOutput? = null
-    private val frame = Choreographer.FrameCallback { wait.frame(windowOk()) }
+    private val frame = Choreographer.FrameCallback {
+      val ok = windowOk()
+      // That way this frame's traversal always draws and its commit arrives. Without it, a theme mount that a frame
+      // drew before start() leaves this frame nothing to draw, and the wait runs into its timeout.
+      if (ok) view.invalidate()
+      wait.frame(ok)
+    }
 
-    // One-shot. Nothing unregisters it, and after the wait ends it does nothing.
-    private val commit = Runnable {
+    // Nothing unregisters a frame-commit callback. release() empties the relay so it doesn't keep this wait alive.
+    private val commit = CommitRelay {
       if (wait.state == WaitState.WAITING_FOR_COMMIT) debug("frame commit after ${sinceStart()} ms")
       wait.commit(windowOk())
     }
@@ -605,7 +641,7 @@ class ThemeRevealModule : Module() {
     override fun registerCommit(): Boolean {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
       return try {
-        // If this frame's traversal draws nothing, no commit comes and the timeout falls back.
+        // Frame callback invalidated the overlay, so this frame's traversal draws and its commit arrives.
         space.host.viewTreeObserver.registerFrameCommitCallback(commit)
         true
       } catch (_: IllegalStateException) {
@@ -620,15 +656,10 @@ class ThemeRevealModule : Module() {
       val prepared = output
       output = null
       val start = System.nanoTime()
-      // Window without the overlay: hidden only while the capture records the window, on this thread.
-      view.visibility = View.INVISIBLE
-      try {
-        WindowSnapshot.captureSecond(space.activity, space.host, mainHandler, prepared) { snapshot ->
-          debug("second snapshot result after ${sinceStart()} ms: ${snapshot != null}")
-          wait.result(snapshot)
-        }
-      } finally {
-        view.visibility = View.VISIBLE
+      // Window without the overlay: the capture hides it only while recording the window, on this thread.
+      WindowSnapshot.captureSecond(space.activity, space.host, mainHandler, view, prepared) { snapshot ->
+        debug("second snapshot result after ${sinceStart()} ms: ${snapshot != null}")
+        wait.result(snapshot)
       }
       if (Log.isLoggable(TAG, Log.DEBUG)) {
         Log.d(
@@ -642,15 +673,30 @@ class ThemeRevealModule : Module() {
       }
     }
 
-    override fun reveal(bitmap: Snapshot): String? = revealSecond(view, space, x, y, durationMs, onEnd, bitmap)
+    override fun reveal(bitmap: Snapshot): String? {
+      val failure = revealSecond(view, space, x, y, durationMs, onEnd, bitmap)
+      if (failure == null) fallbacks.revealed()
+      return failure
+    }
 
     override fun fallBack(reason: String) {
       debug("RenderThread reveal falls back to the UI-thread reveal: $reason")
-      if (overlay === view) view.reveal(ShapePath.circle(), x, y, false, durationMs, onEnd)
+      if (overlay !== view) return
+      // A modal that closed during the wait took the overlay out of the window, so it goes now, same as in start().
+      if (!view.isAttachedToWindow || !space.host.isAttachedToWindow) {
+        removeOverlay()
+        return
+      }
+      if (RevealPlan.countsFallBack(windowOk(), isResumed(space.activity))) {
+        fallbacks.fellBack()
+        if (fallbacks.off) debug("the RenderThread reveal is off for this process: too many fall backs in a row")
+      }
+      view.reveal(ShapePath.circle(), x, y, false, durationMs, onEnd)
     }
 
     override fun release() {
       if (secondSnapshot === this) secondSnapshot = null
+      commit.target = null
       Choreographer.getInstance().removeFrameCallback(frame)
       Choreographer.getInstance().removeFrameCallback(captureFrame)
       mainHandler.removeCallbacks(timeout)
@@ -716,6 +762,9 @@ class ThemeRevealModule : Module() {
 
     // Longest prepare waits for the frame callback before resolving.
     const val RESOLVE_TIMEOUT_MS = 100L
+
+    // The RenderThread reveal's fallbacks in a row, process-wide (RevealPlan.path's secondSnapshotOff).
+    val fallbacks = FallbackCounter(RevealPlan.FALLBACKS_TO_OFF)
     const val TAG = "ThemeReveal"
   }
 }

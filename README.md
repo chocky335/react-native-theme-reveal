@@ -466,7 +466,7 @@ On API 29 and up, the default circle (`reveal` or `inverseReveal` with no `shape
 For `reveal`, this changes what you see:
 - Inside the circle you get a still image of the new screen for the length of the reveal, where before it showed
   the live app. An animation or a video in your app won't move inside the circle until the reveal ends.
-- The circle starts about 2 frames after `start`, once the second snapshot is in. The reveal keeps its duration,
+- The circle starts 2 to 3 frames after `start`, once the second snapshot is in. The reveal keeps its duration,
   so it also ends that much later.
 
 The UI-thread reveal still runs:
@@ -474,9 +474,12 @@ The UI-thread reveal still runs:
 - when the first snapshot came from `PixelCopy` (see the list above),
 - when the transition has a custom `shape`,
 - for one switch, when the second snapshot doesn't come: no frame commit, no result within 200 ms of `start`, a
-  failed GPU capture, or a result for another window or size. The UI-thread reveal then starts at that point, with
-  the full duration. A failed second snapshot doesn't turn the GPU snapshot off,
-- for one switch, when the RenderThread animator doesn't start.
+  failed GPU capture, or a result for another window, size or position. The UI-thread reveal then starts at that
+  point, with the full duration. A failed second snapshot doesn't turn the GPU snapshot off,
+- for one switch, when the RenderThread animator doesn't start,
+- for every later `reveal` until the app process ends, once 3 `reveal` switches in a row have fallen back while
+  the window stayed open. Each fallback can cost a switch up to 200 ms. `inverseReveal` keeps the RenderThread,
+  because it takes no second snapshot.
 
 `wipe` and `crossfade` always run on the UI thread.
 

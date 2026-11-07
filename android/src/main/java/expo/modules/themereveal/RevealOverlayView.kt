@@ -88,6 +88,16 @@ internal class RevealOverlayView(context: Context, private val snapshot: Bitmap)
     play(Mode.CROSSFADE, durationMs, onEnd)
   }
 
+  // Stops an animation from an earlier start and shows the whole snapshot again, static.
+  fun still() {
+    if (mode == Mode.STILL && animator == null) return
+    stopAnimator()
+    mode = Mode.STILL
+    alpha = 1f
+    setLayerType(LAYER_TYPE_NONE, null)
+    invalidate()
+  }
+
   // Stops the animation and hands the snapshot off, either to the kept bitmaps or to be freed.
   fun release(drop: (Bitmap) -> Unit) {
     stopAnimator()

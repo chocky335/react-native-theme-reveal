@@ -112,7 +112,8 @@ internal object CapturePlan {
   }
 }
 
-// The warm-up's GPU pre-creates on the copy thread. A GPU capture's image arrives on that thread, so it can wait
+// GPU jobs on the copy thread: the warm-up's pre-creates, plus the RenderThread reveal's prepared targets and
+// pre-imports. All of them count as pre-creates here. A GPU capture's image arrives on that thread, so it can wait
 // behind a pre-create past the timeout. The first such timeout of each pre-create is forgiven and the GPU path stays
 // on. If that pre-create still holds the copy thread at a later switch, that switch skips the GPU capture. So a
 // pre-create that never returns costs only one switch the timeout. Main thread only.
