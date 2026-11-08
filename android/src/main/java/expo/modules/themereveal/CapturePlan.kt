@@ -149,13 +149,15 @@ internal class PreCreates {
 }
 
 // How a GPU capture ends: image, timeout or failure, whichever comes first. The rest get dropped and a late bitmap
-// is recycled. onResult runs once. release runs once, after onResult for an image and before it for a failure. Main
+// is recycled. onResult runs once. release runs once, after onResult for an image and before it for a failure.
+// afterImage runs that release after an image: right away by default, or later (after the overlay's frame). Main
 // thread only.
 internal class CaptureEnd<B : Any>(
   private val release: () -> Unit,
   private val recycle: (B) -> Unit,
   private val cancelTimeout: () -> Unit,
   private val onResult: (B?, GpuFailure?) -> Unit,
+  private val afterImage: (() -> Unit) -> Unit = { it() },
 ) {
   private var finished = false
 
@@ -171,11 +173,11 @@ internal class CaptureEnd<B : Any>(
       onResult(null, GpuFailure.ERROR)
       return
     }
-    // Overlay goes up first, then the renderer goes away.
+    // Overlay goes up first, then the renderer goes away, once afterImage runs it.
     try {
       onResult(bitmap, null)
     } finally {
-      release()
+      afterImage(release)
     }
   }
 

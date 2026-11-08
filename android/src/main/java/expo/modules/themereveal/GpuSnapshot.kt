@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.util.DisplayMetrics
 import android.util.TypedValue
+import android.view.Choreographer
 import android.view.View
 import androidx.annotation.RequiresApi
 
@@ -45,6 +46,9 @@ internal class GpuOutput(
 @RequiresApi(Build.VERSION_CODES.Q)
 internal object GpuSnapshot {
   private const val USAGE = HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
+
+  // Longest a capture's release waits for the frame after its image. No frame comes while the screen is off.
+  private const val RELEASE_TIMEOUT_MS = 100L
 
   // Light the window's renderer uses for elevation shadows (ThreadedRenderer), or null if the theme doesn't define
   // it.
@@ -211,6 +215,25 @@ internal object GpuSnapshot {
     }
   }
 
+  // Runs release on handler after the next frame, which is the overlay's frame when an image just attached the
+  // overlay. The renderer's destroy waits for the RenderThread (0.5-2 ms of main on a Mi 11 Lite), so keep it out
+  // of the time before that frame. A timeout runs it if no frame comes.
+  private fun afterNextFrame(handler: Handler, release: () -> Unit) {
+    val once = Once(release)
+    lateinit var timeout: Runnable
+    val frame = Choreographer.FrameCallback {
+      handler.removeCallbacks(timeout)
+      // A message posted after this one runs after the frame's traversal.
+      handler.post { once.run() }
+    }
+    timeout = Runnable {
+      Choreographer.getInstance().removeFrameCallback(frame)
+      once.run()
+    }
+    Choreographer.getInstance().postFrameCallback(frame)
+    handler.postDelayed(timeout, RELEASE_TIMEOUT_MS)
+  }
+
   // Force dark can darken this activity's windows (see CapturePlan.forceDarkCanApply).
   fun forceDarkCanApply(activity: Activity): Boolean {
     val value = TypedValue()
@@ -258,6 +281,7 @@ internal object GpuSnapshot {
       recycle = { it.recycle() },
       cancelTimeout = { handler.removeCallbacks(timeout) },
       onResult = onResult,
+      afterImage = { release -> afterNextFrame(handler, release) },
     )
     timeout = Runnable { end.timeout() }
     try {

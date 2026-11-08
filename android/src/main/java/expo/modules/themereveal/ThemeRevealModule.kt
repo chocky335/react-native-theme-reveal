@@ -83,13 +83,21 @@ class ThemeRevealModule : Module() {
 
   // Frees the kept bitmaps when the app is hidden or low on memory, or the screen changes size. Runs on main.
   private val memoryCallbacks = object : ComponentCallbacks2 {
-    override fun onTrimMemory(level: Int) = WindowSnapshot.kept.onTrimMemory(level)
+    override fun onTrimMemory(level: Int) {
+      WindowSnapshot.kept.onTrimMemory(level)
+      WindowSnapshot.target.onTrimMemory(level)
+    }
 
-    override fun onConfigurationChanged(newConfig: Configuration) =
+    override fun onConfigurationChanged(newConfig: Configuration) {
       WindowSnapshot.kept.onScreenSize(newConfig.screenWidthDp, newConfig.screenHeightDp)
+      WindowSnapshot.target.onScreenSize(newConfig.screenWidthDp, newConfig.screenHeightDp)
+    }
 
     @Deprecated("Deprecated in Java")
-    override fun onLowMemory() = WindowSnapshot.kept.clear()
+    override fun onLowMemory() {
+      WindowSnapshot.kept.clear()
+      WindowSnapshot.target.clear()
+    }
   }
 
   // Context memoryCallbacks are registered with.
@@ -130,7 +138,10 @@ class ThemeRevealModule : Module() {
         it.registerComponentCallbacks(memoryCallbacks)
         // Size to compare the first change against.
         val config = it.resources.configuration
-        mainHandler.post { WindowSnapshot.kept.onScreenSize(config.screenWidthDp, config.screenHeightDp) }
+        mainHandler.post {
+          WindowSnapshot.kept.onScreenSize(config.screenWidthDp, config.screenHeightDp)
+          WindowSnapshot.target.onScreenSize(config.screenWidthDp, config.screenHeightDp)
+        }
       }
     }
 
@@ -143,6 +154,7 @@ class ThemeRevealModule : Module() {
       voidCapture("destroy")
       removeOverlay()
       WindowSnapshot.kept.hide()
+      WindowSnapshot.target.hide()
     }
 
     OnDestroy {
@@ -153,6 +165,9 @@ class ThemeRevealModule : Module() {
         voidCapture("destroy")
         removeOverlay()
         WindowSnapshot.kept.hide()
+        WindowSnapshot.target.hide()
+        // Next module keeps a target only if its own warm-up runs.
+        WindowSnapshot.target.keep = false
       }
     }
   }
@@ -160,6 +175,7 @@ class ThemeRevealModule : Module() {
   // Off main: starts the copy thread. Then, on main, prepares the first switch's capture: GPU capture on API 29+,
   // otherwise a kept bitmap of the window's size. Failures go to the log and the promise.
   private fun warmUp(promise: Promise) {
+    loadClasses()
     val error = try {
       WindowSnapshot.warmUp()
       null
@@ -169,12 +185,55 @@ class ThemeRevealModule : Module() {
     }
     mainHandler.post {
       WindowSnapshot.kept.keep = true
+      WindowSnapshot.target.keep = true
       val activity = appContext.currentActivity
       // A JS reload hid the pool in the old module's OnDestroy. This warm-up comes from a mounted UI.
-      if (activity != null && isResumed(activity)) WindowSnapshot.kept.show()
+      if (activity != null && isResumed(activity)) {
+        WindowSnapshot.kept.show()
+        WindowSnapshot.target.show()
+      }
       // Copy thread didn't start, so the first switch's path can't be prepared either.
-      if (error == null) WindowSnapshot.prepareFirst(activity, mainHandler)
+      if (error == null) {
+        WindowSnapshot.prepareFirst(activity, mainHandler)
+        WindowSnapshot.keepTarget(activity, mainHandler)
+      }
       if (error == null) promise.resolve() else promise.reject("ERR_THEME_REVEAL_WARM_UP", error.message, error)
+    }
+  }
+
+  // Off main: loads the classes a switch uses, so the first switch doesn't load them on the main thread. A class that
+  // can't load here loads on first use, as before.
+  private fun loadClasses() {
+    val classes = listOf(
+      HeldCapture::class.java,
+      PendingCapture::class.java,
+      OverlayGeometry::class.java,
+      CommitRelay::class.java,
+      SecondSnapshot::class.java,
+      Snapshot::class.java,
+      RevealOverlayView::class.java,
+      Once::class.java,
+      CaptureRules::class.java,
+      CaptureEnd::class.java,
+      Motion::class.java,
+      ShapePath::class.java,
+      RevealPlan::class.java,
+      RevealPath::class.java,
+      GrowthInterpolator::class.java,
+      ShrinkInterpolator::class.java,
+      FallbackCounter::class.java,
+      SecondSnapshotWait::class.java,
+      WaitState::class.java,
+      KeptTarget::class.java,
+    )
+    for (type in classes) {
+      try {
+        Class.forName(type.name, true, type.classLoader)
+      } catch (_: LinkageError) {
+        // Loads on first use.
+      } catch (_: ClassNotFoundException) {
+        // Loads on first use.
+      }
     }
   }
 
@@ -717,6 +776,19 @@ class ThemeRevealModule : Module() {
     geometry = null
     (view.parent as? ViewGroup)?.removeView(view)
     view.release(WindowSnapshot.kept::give)
+    keepTargetWhenIdle()
+  }
+
+  // After a switch, once the main thread is idle: the capture target for the next switch's first snapshot. Not while
+  // another switch or capture is running.
+  private fun keepTargetWhenIdle() {
+    Looper.getMainLooper().queue.addIdleHandler {
+      val activity = appContext.currentActivity
+      if (overlay == null && pendingCapture == null && activity != null && isResumed(activity)) {
+        WindowSnapshot.keepTarget(activity, mainHandler)
+      }
+      false
+    }
   }
 
   private fun debug(message: String) {

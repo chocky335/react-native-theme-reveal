@@ -516,13 +516,28 @@ On API 29 and up (the GPU snapshot), the warm-up makes a 1 x 1 GPU snapshot of n
 `ImageReader`, a `HardwareRenderer` and one drawn frame, which it then frees. It draws no view, so the window isn't
 touched, and it keeps no bitmap, because each GPU snapshot makes its own hardware bitmap and frees it with the
 snapshot. A switch that falls back to `PixelCopy` keeps its bitmap, the same as on API 26 to 28.
+
+Then, still on the copy thread, it makes one capture target the size of the activity window: an `ImageReader`, a
+`HardwareRenderer` with its surface, and one allocated buffer. It holds on to that target until a snapshot of the
+activity window uses it, so that snapshot skips the setup. A system trace on a Mi 11 Lite puts the saving at 4 to
+10 ms on the first switch. After each switch, the package makes the next target once the main thread is idle. The
+warm-up also loads the package's classes on its own thread, so the first switch doesn't load them on the main
+thread.
 - What it gains, on the first switch in a fresh process (3 runs each): on a Pixel 8 Pro (API 37) the main thread
   spent 18.2-19.0 ms on the snapshot without the warm-up and 2.9-5.7 ms with it, and the first `ImageReader` in the
   process accounted for 13.4-14.7 ms of that. The snapshot was ready 23.8-28.2 ms after the switch started without
   the warm-up and 10.3-12.9 ms with it. On a Mi 11 Lite (API 33) the first snapshot was already fast (3.9-7.1 ms
   on the main thread), and I couldn't measure any change from the warm-up.
-- What it costs: 30-44 ms on the copy thread at mount on the Pixel 8 Pro and 4 ms on the Mi 11 Lite, partly on the
-  RenderThread. No memory stays in use.
+- What it costs: 30-44 ms on the copy thread at mount on the Pixel 8 Pro and 4 ms on the Mi 11 Lite for the 1 x 1
+  snapshot. The kept target adds 11.5-23.8 ms on the copy thread on the Mi 11 Lite, at mount and after each switch.
+  Part of this runs on the RenderThread.
+- Memory: one window-size GPU buffer between switches, at 4 bytes per pixel about 10 MB at 1080x2400. The package
+  never keeps more than one.
+- The kept target is freed when the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or
+  above), on low memory, when the screen size changes, when the activity is destroyed, when the GPU snapshot turns
+  itself off and when the module is destroyed (a JS reload). A snapshot of a window with a different size frees it
+  and makes its own target. Nothing is kept while the app is in the background: the next switch's snapshot makes
+  its own target, and the package keeps a new one after that switch.
 
 On API 26 to 28 (`PixelCopy`), for an API 29+ activity window that takes `PixelCopy` (see
 [How it works on Android](#how-it-works-on-android)), and in a process where the GPU snapshot switched itself off
@@ -542,8 +557,8 @@ first switch gets a fast copy.
   in the background, and the next switch keeps a new bitmap.
 
 If you have several instances, the warm-up runs as long as any of them has `warmUp: true`. With `warmUp: false`
-there's no warm-up at all (no thread start, no GPU snapshot of nothing, no copy, no kept bitmap), and every
-snapshot allocates its own bitmap.
+there's no warm-up at all (no thread start, no GPU snapshot of nothing, no copy, no kept bitmap and no kept capture
+target), and every snapshot allocates its own bitmap and its own target.
 
 On iOS `warmUp` does nothing, since the snapshot there has no thread or bitmap to prepare. If the warm-up fails,
 the error goes to `onError` and switches keep working.

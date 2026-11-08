@@ -25,6 +25,39 @@ class CaptureEndTest {
   }
 
   @Test
+  fun anImageHandsTheReleaseOnToBeRunLater() {
+    val later = mutableListOf<() -> Unit>()
+    val end = CaptureEnd<String>(
+      release = { events += "release" },
+      recycle = { events += "recycle $it" },
+      cancelTimeout = { events += "cancel timeout" },
+      onResult = { bitmap, failure -> events += "result $bitmap $failure" },
+      afterImage = { later += it },
+    )
+    end.image("a")
+    // Overlay goes up now, the renderer after the overlay's frame.
+    assertEquals(listOf("cancel timeout", "result a null"), events)
+    assertEquals(1, later.size)
+    later.single()()
+    assertEquals(listOf("cancel timeout", "result a null", "release"), events)
+  }
+
+  @Test
+  fun aFailureReleasesAtOnce() {
+    val later = mutableListOf<() -> Unit>()
+    val end = CaptureEnd<String>(
+      release = { events += "release" },
+      recycle = { events += "recycle $it" },
+      cancelTimeout = { events += "cancel timeout" },
+      onResult = { bitmap, failure -> events += "result $bitmap $failure" },
+      afterImage = { later += it },
+    )
+    end.fail(GpuFailure.SYNC)
+    assertEquals(listOf("cancel timeout", "release", "result null SYNC"), events)
+    assertEquals(0, later.size)
+  }
+
+  @Test
   fun anImageAfterTheTimeoutIsRecycled() {
     val end = end()
     end.timeout()

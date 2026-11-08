@@ -137,6 +137,9 @@ internal object WindowSnapshot {
     }
   }
 
+  // Capture target kept for the activity window's next first snapshot (keepTarget). Main thread only.
+  val target = KeptTarget<GpuOutput> { releaseOutput(it) }
+
   // Set when a GPU capture timed out or threw: from then on the process captures with PixelCopy. Main thread only.
   var gpuOff = false
     private set
@@ -182,13 +185,18 @@ internal object WindowSnapshot {
         // The view gets hidden inside the draw, after the dirty read above: hiding it marks its window dirty, which
         // would read as a view change under force dark.
         val record = if (hide == null) draw else drawWithout(hide, draw)
-        GpuSnapshot.capture(decor.width, decor.height, light, dirty, handler, copyHandler, record, prepared) {
+        // A first snapshot draws into the kept target if it has the decor's size.
+        val output = prepared ?: if (gpuOnly) null else target.take(decor.width, decor.height)
+        GpuSnapshot.capture(decor.width, decor.height, light, dirty, handler, copyHandler, record, output) {
             bitmap, failure ->
           if (bitmap != null) {
             onResult(bitmap)
             return@capture
           }
-          if (!gpuOnly && failure != null && preCreates.turnsGpuOff(failure, busyAtStart, countAtStart)) gpuOff = true
+          if (!gpuOnly && failure != null && preCreates.turnsGpuOff(failure, busyAtStart, countAtStart)) {
+            gpuOff = true
+            target.clear()
+          }
           fallback(onResult)
         }
         return
@@ -233,6 +241,22 @@ internal object WindowSnapshot {
         preCreates.finished()
         onReady(output, ms)
       }
+    }
+  }
+
+  // Main thread. Prepares the target the activity window's next first snapshot draws into, if KeptTarget wants one:
+  // a window of known size whose capture takes the GPU path, with none kept or in flight.
+  fun keepTarget(activity: Activity?, handler: Handler) {
+    val decor = activity?.window?.peekDecorView() ?: return
+    val width = decor.width
+    val height = decor.height
+    if (!target.wants(width, height, warmUpOf(activity) == WarmUp.GPU)) return
+    val ticket = target.started()
+    prepareOutput(width, height, handler) { output, ms ->
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        Log.d(TAG, "kept a capture target of ${width}x$height in %.1f ms on the copy thread: %b".format(ms, output != null))
+      }
+      target.ready(ticket, output, width, height)
     }
   }
 
