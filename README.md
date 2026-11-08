@@ -1,5 +1,9 @@
 # react-native-theme-reveal
 
+[![npm](https://img.shields.io/npm/v/react-native-theme-reveal)](https://www.npmjs.com/package/react-native-theme-reveal)
+[![CI](https://github.com/chocky335/react-native-theme-reveal/actions/workflows/ci.yml/badge.svg)](https://github.com/chocky335/react-native-theme-reveal/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/react-native-theme-reveal)](LICENSE)
+
 Animated theme switches for React Native, done with a native snapshot of the window: a reveal from the touch
 point, an inverse reveal, a wipe or a crossfade.
 
