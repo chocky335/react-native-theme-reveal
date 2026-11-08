@@ -1,7 +1,7 @@
 {
   "name": "react-native-theme-reveal",
   "version": "0.1.0",
-  "description": "Animate React Native theme switches from a native window snapshot",
+  "description": "Animated dark mode and theme switches for React Native and Expo: circular reveal, wipe and crossfade",
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "files": [
@@ -33,11 +33,23 @@
   "keywords": [
     "react-native",
     "expo",
+    "expo-module",
     "theme",
     "dark-mode",
+    "light-mode",
+    "theme-switch",
+    "theme-toggle",
+    "theme-transition",
+    "circular-reveal",
+    "reveal-animation",
+    "animation",
     "transition",
-    "animation"
+    "ios",
+    "android",
+    "new-architecture",
+    "typescript"
   ],
+  "author": "chocky335 (https://github.com/chocky335)",
   "repository": "https://github.com/chocky335/react-native-theme-reveal",
   "bugs": {
     "url": "https://github.com/chocky335/react-native-theme-reveal/issues"
