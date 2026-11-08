@@ -102,9 +102,17 @@ jobs:
 
       # npm trusted publishing, so no NPM_TOKEN secret: npm swaps the job's OIDC token for a short-lived publish
       # credential and adds provenance. On npmjs.com, set this repo and release.yml as the trusted publisher.
+      # Without publish, the version is already on npm, so npm publish --dry-run would refuse it. Pack instead,
+      # and make sure the version we tag really is published.
       - name: Check the package
         if: ${{ !inputs.publish }}
-        run: npm publish --dry-run --ignore-scripts --access public
+        run: |
+          npm pack --dry-run --ignore-scripts
+          name="$(node -p "require('./package.json').name")"
+          if ! npm view "$name@${TAG#v}" version > /dev/null 2>&1; then
+            echo "::error::${TAG#v} is not on npm. Run with publish on, or publish it by hand first."
+            exit 1
+          fi
 
       - name: Publish to npm
         if: ${{ inputs.publish }}
