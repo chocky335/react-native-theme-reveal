@@ -14,10 +14,16 @@ class KeptTargetTest {
   }
 
   private val freed = mutableListOf<String>()
-  private val kept = KeptTarget<Fake> {
-    it.freed = true
-    freed += it.name
-  }
+
+  // Targets handed to a later free (off the capture's path), in order.
+  private val later = mutableListOf<Fake>()
+  private val kept = KeptTarget<Fake>(
+    free = {
+      it.freed = true
+      freed += it.name
+    },
+    freeLater = { later += it },
+  )
 
   // A warm-up turned keeping on, and a 1080x2400 target is ready.
   private fun keepOne(name: String = "a"): Fake {
@@ -51,11 +57,75 @@ class KeptTargetTest {
   }
 
   @Test
-  fun aCaptureOfAnotherSizeFreesTheTarget() {
+  fun aCaptureOfAnotherSizeFreesTheTargetLater() {
     val target = keepOne()
     assertNull(kept.take(2400, 1080))
+    // Off the capture's path: a later free gets it.
+    assertFalse(target.freed)
+    assertEquals(listOf(target), later)
+    assertEquals(0, kept.size)
+  }
+
+  @Test
+  fun aTargetThatNoCaptureCanUseIsDropped() {
+    val target = keepOne()
+    kept.drop(1080, 2400, gpuOn = true)
+    assertFalse(target.freed)
+    kept.drop(1080, 2300, gpuOn = true)
     assertTrue(target.freed)
     assertEquals(0, kept.size)
+    val wide = keepOne("wide")
+    // The window moved to a path without the GPU capture (wide color, say).
+    kept.drop(1080, 2400, gpuOn = false)
+    assertTrue(wide.freed)
+  }
+
+  @Test
+  fun aClearDuringAPrepareStartsNoSecondUntilItEnds() {
+    kept.keep = true
+    val stale = kept.started()
+    kept.clear()
+    // The first prepare's buffer still exists on the copy thread.
+    assertFalse(kept.wants(1080, 2400, gpuOn = true))
+    kept.ready(stale, Fake("stale"), 1080, 2400)
+    assertTrue(kept.wants(1080, 2400, gpuOn = true))
+  }
+
+  @Test
+  fun aStaleResultWhileANewerPrepareRunsStartsNoThird() {
+    kept.keep = true
+    val stale = kept.started()
+    kept.clear()
+    kept.ready(stale, Fake("stale"), 1080, 2400)
+    val newer = kept.started()
+    kept.clear()
+    val newest = kept.started()
+    kept.ready(newer, Fake("newer"), 1080, 2400)
+    // Newest prepare is still running.
+    assertFalse(kept.wants(1080, 2400, gpuOn = true))
+    val target = Fake("newest")
+    kept.ready(newest, target, 1080, 2400)
+    assertSame(target, kept.take(1080, 2400))
+  }
+
+  @Test
+  fun aResultThatComesWhileHiddenIsFreed() {
+    kept.keep = true
+    kept.hide()
+    // Ticket is current, so only the hidden state frees it.
+    val target = Fake("a")
+    kept.ready(kept.started(), target, 1080, 2400)
+    assertTrue(target.freed)
+  }
+
+  @Test
+  fun aResultThatComesAfterKeepingTurnedOffIsFreed() {
+    kept.keep = true
+    val ticket = kept.started()
+    kept.keep = false
+    val target = Fake("a")
+    kept.ready(ticket, target, 1080, 2400)
+    assertTrue(target.freed)
   }
 
   @Test
@@ -146,5 +216,17 @@ class KeptTargetTest {
     kept.clear()
     kept.clear()
     assertEquals(listOf("a"), freed)
+  }
+
+  @Test
+  fun preparingHoldsWhileAnyPrepareRuns() {
+    kept.keep = true
+    assertFalse(kept.preparing)
+    val stale = kept.started()
+    kept.clear()
+    // The stale prepare still holds the copy thread.
+    assertTrue(kept.preparing)
+    kept.ready(stale, null, 1080, 2400)
+    assertFalse(kept.preparing)
   }
 }

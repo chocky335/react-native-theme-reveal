@@ -57,6 +57,30 @@ class CaptureEndTest {
     assertEquals(0, later.size)
   }
 
+  private fun deferring(later: MutableList<() -> Unit>) = CaptureEnd<String>(
+    release = { events += "release" },
+    recycle = { events += "recycle $it" },
+    cancelTimeout = { events += "cancel timeout" },
+    onResult = { bitmap, failure -> events += "result $bitmap $failure" },
+    afterImage = { later += it },
+  )
+
+  @Test
+  fun aMissingImageReleasesAtOnce() {
+    val later = mutableListOf<() -> Unit>()
+    deferring(later).image(null)
+    assertEquals(listOf("cancel timeout", "release", "result null ERROR"), events)
+    assertEquals(0, later.size)
+  }
+
+  @Test
+  fun aTimeoutReleasesAtOnce() {
+    val later = mutableListOf<() -> Unit>()
+    deferring(later).timeout()
+    assertEquals(listOf("release", "result null TIMEOUT"), events)
+    assertEquals(0, later.size)
+  }
+
   @Test
   fun anImageAfterTheTimeoutIsRecycled() {
     val end = end()

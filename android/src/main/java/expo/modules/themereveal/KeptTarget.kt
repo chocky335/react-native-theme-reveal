@@ -4,17 +4,18 @@ import android.content.ComponentCallbacks2
 
 // GPU capture target kept between switches for the next first snapshot (GpuSnapshot.prepareOutput): at most one, made
 // in idle time, so the capture skips creating a renderer, surface and buffer. The capture takes it, and frees it if
-// the window has another size. It's freed when the app is hidden or low on memory, the screen changes size, the
-// activity or module goes away, or the GPU path turns off. Main thread only. Generic over the target type so JVM
-// tests can run it.
-internal class KeptTarget<T : Any>(private val free: (T) -> Unit) {
+// the window has another size (freeLater, in a later main message). It's freed when the app is hidden or low on
+// memory, the screen changes size, the activity or module goes away, or the GPU path turns off. Main thread only.
+// Generic over the target type so JVM tests can run it.
+internal class KeptTarget<T : Any>(private val free: (T) -> Unit, private val freeLater: (T) -> Unit = free) {
   // Off until a warm-up turns it on (the warmUp option).
   var keep = false
 
   private var held: T? = null
   private var width = 0
   private var height = 0
-  private var preparing = false
+  // Prepares in flight, including ones a clear made stale: their buffers exist until they end.
+  private var inFlight = 0
 
   // A prepare that started before a clear ends with a stale ticket, so its target is freed.
   private var ticket = 0
@@ -26,14 +27,17 @@ internal class KeptTarget<T : Any>(private val free: (T) -> Unit) {
 
   val size: Int get() = if (held == null) 0 else 1
 
+  // A prepare is holding the copy thread right now, stale or not.
+  val preparing: Boolean get() = inFlight > 0
+
   // Whether a prepare of a width x height target needs to start now. gpuOn: the window's next capture takes the GPU
   // path.
   fun wants(width: Int, height: Int, gpuOn: Boolean): Boolean =
-    keep && !hidden && gpuOn && held == null && !preparing && width > 0 && height > 0
+    keep && !hidden && gpuOn && held == null && inFlight == 0 && width > 0 && height > 0
 
   // A prepare starts. Its result goes to ready along with the ticket returned here.
   fun started(): Int {
-    preparing = true
+    inFlight++
     return ticket
   }
 
@@ -41,7 +45,7 @@ internal class KeptTarget<T : Any>(private val free: (T) -> Unit) {
   // started, keeping is on and nothing else is kept. Freed otherwise.
   fun ready(ticket: Int, target: T?, width: Int, height: Int) {
     val current = ticket == this.ticket
-    if (current) preparing = false
+    if (inFlight > 0) inFlight--
     if (target == null) return
     if (!current || !keep || hidden || held != null) {
       free(target)
@@ -52,14 +56,19 @@ internal class KeptTarget<T : Any>(private val free: (T) -> Unit) {
     this.height = height
   }
 
-  // Next capture of width x height: the kept target if it has that size. One of another size is freed.
+  // Next capture of width x height: the kept target if it has that size. One of another size goes to freeLater.
   fun take(width: Int, height: Int): T? {
     hidden = false
     val target = held ?: return null
     held = null
     if (width == this.width && height == this.height) return target
-    free(target)
+    freeLater(target)
     return null
+  }
+
+  // Frees a kept target the window's next capture can't use (another size, or no GPU path).
+  fun drop(width: Int, height: Int, gpuOn: Boolean) {
+    if (held != null && (!gpuOn || width != this.width || height != this.height)) clear()
   }
 
   fun onTrimMemory(level: Int) {
@@ -87,7 +96,6 @@ internal class KeptTarget<T : Any>(private val free: (T) -> Unit) {
   // Frees the kept target, and the one a running prepare makes.
   fun clear() {
     ticket++
-    preparing = false
     val target = held ?: return
     held = null
     free(target)

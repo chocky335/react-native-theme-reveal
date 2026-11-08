@@ -421,7 +421,8 @@ falls back to `PixelCopy` too when:
 A warm-up that never ends is a problem on API 29 to 33, because there the `PixelCopy` request runs on the copy
 thread too. The `PixelCopy` snapshot then waits behind the warm-up, and so do the switch and `setTheme`. I haven't
 measured this, since no test made the warm-up hang. On API 34 and up the `PixelCopy` request runs on the main
-thread and doesn't wait.
+thread and doesn't wait. The package also frees each GPU snapshot's renderer on the copy thread, so if that thread
+hangs, those renderers stay in memory until the process ends.
 
 I compared the GPU snapshot with `PixelCopy` on a Mi 11 Lite (API 33) and a Pixel 8 Pro (API 37). On the home
 screen, the benchmark screen, a screen with elevation shadows and a full-screen modal, not a single pixel differs.
@@ -517,27 +518,41 @@ On API 29 and up (the GPU snapshot), the warm-up makes a 1 x 1 GPU snapshot of n
 touched, and it keeps no bitmap, because each GPU snapshot makes its own hardware bitmap and frees it with the
 snapshot. A switch that falls back to `PixelCopy` keeps its bitmap, the same as on API 26 to 28.
 
-Then, still on the copy thread, it makes one capture target the size of the activity window: an `ImageReader`, a
-`HardwareRenderer` with its surface, and one allocated buffer. It holds on to that target until a snapshot of the
-activity window uses it, so that snapshot skips the setup. A system trace on a Mi 11 Lite puts the saving at 4 to
-10 ms on the first switch. After each switch, the package makes the next target once the main thread is idle. The
-warm-up also loads the package's classes on its own thread, so the first switch doesn't load them on the main
-thread.
+Then, 500 ms after the mount and once the main thread is next idle, it makes one capture target the size of the
+activity window on the copy thread: an `ImageReader`, a `HardwareRenderer` with its surface, and one allocated
+buffer. It holds on to that target until a snapshot of the activity window uses it, so that snapshot skips the
+setup. I haven't measured what the kept target gains on its own. The package makes the next target the same way,
+500 ms after a switch ends or after a press-in snapshot that no switch used. It waits while an overlay shows, a
+snapshot runs or a press-in snapshot is held, and it tries again when the activity comes back to the foreground.
+A switch that starts while a target is being made waits for it: its snapshot gets its image after that work ends,
+11.5-23.8 ms on a Mi 11 Lite. The warm-up also loads most of the package's classes on its own thread, so the first
+switch doesn't load them on the main thread.
 - What it gains, on the first switch in a fresh process (3 runs each): on a Pixel 8 Pro (API 37) the main thread
   spent 18.2-19.0 ms on the snapshot without the warm-up and 2.9-5.7 ms with it, and the first `ImageReader` in the
   process accounted for 13.4-14.7 ms of that. The snapshot was ready 23.8-28.2 ms after the switch started without
   the warm-up and 10.3-12.9 ms with it. On a Mi 11 Lite (API 33) the first snapshot was already fast (3.9-7.1 ms
   on the main thread), and I couldn't measure any change from the warm-up.
 - What it costs: 30-44 ms on the copy thread at mount on the Pixel 8 Pro and 4 ms on the Mi 11 Lite for the 1 x 1
-  snapshot. The kept target adds 11.5-23.8 ms on the copy thread on the Mi 11 Lite, at mount and after each switch.
-  Part of this runs on the RenderThread.
-- Memory: one window-size GPU buffer between switches, at 4 bytes per pixel about 10 MB at 1080x2400. The package
-  never keeps more than one.
-- The kept target is freed when the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or
-  above), on low memory, when the screen size changes, when the activity is destroyed, when the GPU snapshot turns
-  itself off and when the module is destroyed (a JS reload). A snapshot of a window with a different size frees it
-  and makes its own target. Nothing is kept while the app is in the background: the next switch's snapshot makes
-  its own target, and the package keeps a new one after that switch.
+  snapshot. Each kept target adds 11.5-23.8 ms on the copy thread and 4.4-18.7 ms on the RenderThread on the Mi 11
+  Lite (from a system trace).
+- The RenderThread draws your app's frames too, so on a slow phone one app frame can come late while the package
+  makes a target: about 0.5 s after the mount and about 0.5 s after each switch. That only matters if your app is
+  animating right then. The benchmark can't see it, because its screen sits still after a switch.
+- Memory: one window-size GPU buffer between switches, with a started `HardwareRenderer` and its surface. The
+  buffer is 4 bytes per pixel, so about 10 MB at 1080x2400, and the package keeps one at most. I haven't checked it
+  with `dumpsys meminfo`.
+- The package frees the kept target when:
+  - the app goes to the background (`onTrimMemory` at `TRIM_MEMORY_UI_HIDDEN` or above). Nothing is kept until the
+    next snapshot, and the package keeps a new target after that switch.
+  - the system is low on memory.
+  - the screen size changes.
+  - at the next prepare, the activity window has a different size or its snapshot no longer takes the GPU path.
+    If the GPU path is on, the package then makes a new target that fits.
+  - the activity is destroyed.
+  - the GPU snapshot turns itself off.
+  - the module is destroyed (a JS reload).
+- A snapshot of a window with a different size frees the target and makes its own. The free runs on the copy
+  thread before that snapshot's image gets there, so the image can end up waiting for it.
 
 On API 26 to 28 (`PixelCopy`), for an API 29+ activity window that takes `PixelCopy` (see
 [How it works on Android](#how-it-works-on-android)), and in a process where the GPU snapshot switched itself off

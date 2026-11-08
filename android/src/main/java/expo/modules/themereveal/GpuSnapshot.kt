@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.util.DisplayMetrics
 import android.util.TypedValue
+import android.util.Log
 import android.view.Choreographer
 import android.view.View
 import androidx.annotation.RequiresApi
@@ -23,7 +24,8 @@ import androidx.annotation.RequiresApi
 internal class Lighting(val source: LightSource, val ambientAlpha: Float, val spotAlpha: Float)
 
 // GPU capture target made ready ahead of the capture (GpuSnapshot.prepareOutput): its reader, its renderer with the
-// surface already made, and its root node. release frees it, once, on main, unless a capture took it.
+// surface already made, and its root node. release frees it, once, unless a capture took it. Called on main, the work
+// runs on the copy thread (GpuSnapshot.free). what names it in the debug log.
 @RequiresApi(Build.VERSION_CODES.Q)
 internal class GpuOutput(
   val width: Int,
@@ -33,12 +35,8 @@ internal class GpuOutput(
   val node: RenderNode,
   private val readerHandler: Handler,
 ) {
-  fun release() {
-    renderer.destroy()
-    // On the reader's own thread, so the close can't free an image the listener is still reading.
-    readerHandler.post { reader.close() }
-    node.discardDisplayList()
-  }
+  fun release(what: String = "an unused prepared target") =
+    GpuSnapshot.free(readerHandler, renderer, reader, node, what)
 }
 
 // API 29+: window snapshot drawn on the GPU into a hardware bitmap. No readback to the CPU and no upload back to the
@@ -46,6 +44,11 @@ internal class GpuOutput(
 @RequiresApi(Build.VERSION_CODES.Q)
 internal object GpuSnapshot {
   private const val USAGE = HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
+
+  private const val TAG = "ThemeReveal"
+
+  // Debug log name for releasing a capture's own renderer, as opposed to an unused or kept target.
+  const val CAPTURE_RENDERER = "a capture's renderer"
 
   // Longest a capture's release waits for the frame after its image. No frame comes while the screen is off.
   private const val RELEASE_TIMEOUT_MS = 100L
@@ -216,8 +219,8 @@ internal object GpuSnapshot {
   }
 
   // Runs release on handler after the next frame, which is the overlay's frame when an image just attached the
-  // overlay. The renderer's destroy waits for the RenderThread (0.5-2 ms of main on a Mi 11 Lite), so keep it out
-  // of the time before that frame. A timeout runs it if no frame comes.
+  // overlay. release only posts the work to the copy thread (free), so its RenderThread work lands after that frame.
+  // A timeout runs it if no frame comes.
   private fun afterNextFrame(handler: Handler, release: () -> Unit) {
     val once = Once(release)
     lateinit var timeout: Runnable
@@ -232,6 +235,32 @@ internal object GpuSnapshot {
     }
     Choreographer.getInstance().postFrameCallback(frame)
     handler.postDelayed(timeout, RELEASE_TIMEOUT_MS)
+  }
+
+  // Frees a capture's renderer, reader and node on readerHandler's thread (the reader's own) instead of main:
+  // renderer.destroy waits for the RenderThread, 1.0-19.4 ms on a Mi 11 Lite. By then nothing else uses them. Main is
+  // done with the renderer, and its stop() and the image listener already ran on that same thread, so the close can't
+  // free an image the listener is still reading. A bitmap from the image holds its own reference to the buffer.
+  fun free(
+    readerHandler: Handler,
+    renderer: HardwareRenderer?,
+    reader: ImageReader?,
+    node: RenderNode,
+    what: String = CAPTURE_RENDERER,
+  ) {
+    readerHandler.post {
+      val start = System.nanoTime()
+      try {
+        renderer?.destroy()
+      } finally {
+        reader?.close()
+        node.discardDisplayList()
+      }
+      if (Log.isLoggable(TAG, Log.DEBUG)) {
+        val ms = (System.nanoTime() - start) / 1e6
+        Log.d(TAG, "released $what in %.1f ms on the copy thread".format(ms))
+      }
+    }
   }
 
   // Force dark can darken this activity's windows (see CapturePlan.forceDarkCanApply).
@@ -269,14 +298,7 @@ internal object GpuSnapshot {
     lateinit var timeout: Runnable
     val end = CaptureEnd<Bitmap>(
       release = {
-        if (ready != null) {
-          ready.release()
-        } else {
-          renderer?.destroy()
-          // On the reader's own thread, so the close can't free an image the listener is still reading.
-          reader?.let { images -> readerHandler.post { images.close() } }
-          node.discardDisplayList()
-        }
+        if (ready != null) ready.release(CAPTURE_RENDERER) else free(readerHandler, renderer, reader, node)
       },
       recycle = { it.recycle() },
       cancelTimeout = { handler.removeCallbacks(timeout) },
@@ -324,7 +346,7 @@ internal object GpuSnapshot {
       }
       // A RenderThread animation in the window (a ripple, say) would make this renderer redraw the whole window
       // every vsync until release. Stop it once its frame is drawn. stop() waits for that on the RenderThread, so
-      // it runs off the main thread. destroy() stays on main.
+      // it runs off the main thread. The release (free) runs later on the same thread.
       readerHandler.post {
         try {
           output.stop()

@@ -35,4 +35,16 @@ internal object CaptureRules {
     return ticket == currentTicket && generation == generationBefore && sameWindow &&
       Motion.sameSize(snapshotW, snapshotH, coverW, coverH) && age >= 0 && age < TIMEOUT_MS
   }
+
+  // The capture target for the next switch (KeptTarget) is only prepared while no switch or press-in is using the
+  // copy thread or the RenderThread: no overlay showing, no press-in capture running or held, no switch capture
+  // running. The prepare blocks the copy thread, which is where those captures get their images. Foreground only,
+  // too.
+  fun keepsTargetNow(
+    overlayShown: Boolean,
+    captureRunning: Boolean,
+    captureHeld: Boolean,
+    switchCapturing: Boolean,
+    resumed: Boolean,
+  ): Boolean = !overlayShown && !captureRunning && !captureHeld && !switchCapturing && resumed
 }

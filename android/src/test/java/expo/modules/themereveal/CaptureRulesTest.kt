@@ -101,4 +101,37 @@ class CaptureRulesTest {
   fun theTimeoutIsThreeSeconds() {
     assertTrue(CaptureRules.TIMEOUT_MS == 3_000L)
   }
+
+  private fun keepsTarget(
+    overlayShown: Boolean = false,
+    captureRunning: Boolean = false,
+    captureHeld: Boolean = false,
+    switchCapturing: Boolean = false,
+    resumed: Boolean = true,
+  ) = CaptureRules.keepsTargetNow(overlayShown, captureRunning, captureHeld, switchCapturing, resumed)
+
+  @Test
+  fun aQuietResumedAppPreparesTheNextTarget() {
+    assertTrue(keepsTarget())
+  }
+
+  @Test
+  fun noTargetIsPreparedDuringASwitch() {
+    // The reveal runs.
+    assertFalse(keepsTarget(overlayShown = true))
+    // A switch's capture is running, and the prepare would hold its image back on the copy thread.
+    assertFalse(keepsTarget(switchCapturing = true))
+  }
+
+  @Test
+  fun noTargetIsPreparedDuringAPressIn() {
+    // The press-in capture is running, or held for a switch about to start.
+    assertFalse(keepsTarget(captureRunning = true))
+    assertFalse(keepsTarget(captureHeld = true))
+  }
+
+  @Test
+  fun noTargetIsPreparedInTheBackground() {
+    assertFalse(keepsTarget(resumed = false))
+  }
 }

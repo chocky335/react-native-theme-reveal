@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.os.Process
 import android.util.Log
 import android.view.PixelCopy
@@ -137,8 +138,14 @@ internal object WindowSnapshot {
     }
   }
 
-  // Capture target kept for the activity window's next first snapshot (keepTarget). Main thread only.
-  val target = KeptTarget<GpuOutput> { releaseOutput(it) }
+  private val mainHandler = Handler(Looper.getMainLooper())
+
+  // Capture target kept for the activity window's next first snapshot (keepTarget). Main thread only. A target a
+  // capture can't use is freed in a later main message, off that capture's path.
+  val target = KeptTarget<GpuOutput>(
+    { releaseOutput(it, KEPT_TARGET) },
+    { output -> mainHandler.post { releaseOutput(output, KEPT_TARGET) } },
+  )
 
   // Set when a GPU capture timed out or threw: from then on the process captures with PixelCopy. Main thread only.
   var gpuOff = false
@@ -187,6 +194,9 @@ internal object WindowSnapshot {
         val record = if (hide == null) draw else drawWithout(hide, draw)
         // A first snapshot draws into the kept target if it has the decor's size.
         val output = prepared ?: if (gpuOnly) null else target.take(decor.width, decor.height)
+        if (output == null && !gpuOnly && target.preparing && Log.isLoggable(TAG, Log.DEBUG)) {
+          Log.d(TAG, "a snapshot starts while the kept target is made: its image waits behind that prepare")
+        }
         GpuSnapshot.capture(decor.width, decor.height, light, dirty, handler, copyHandler, record, output) {
             bitmap, failure ->
           if (bitmap != null) {
@@ -250,20 +260,26 @@ internal object WindowSnapshot {
     val decor = activity?.window?.peekDecorView() ?: return
     val width = decor.width
     val height = decor.height
-    if (!target.wants(width, height, warmUpOf(activity) == WarmUp.GPU)) return
+    val gpuOn = warmUpOf(activity) == WarmUp.GPU
+    // A target of the old size, or of a window that left the GPU path, goes now and a new one replaces it.
+    target.drop(width, height, gpuOn)
+    if (!target.wants(width, height, gpuOn)) return
     val ticket = target.started()
     prepareOutput(width, height, handler) { output, ms ->
       if (Log.isLoggable(TAG, Log.DEBUG)) {
-        Log.d(TAG, "kept a capture target of ${width}x$height in %.1f ms on the copy thread: %b".format(ms, output != null))
+        val made = output != null
+        Log.d(TAG, "kept a capture target of ${width}x$height in %.1f ms on the copy thread: %b".format(ms, made))
       }
       target.ready(ticket, output, width, height)
     }
   }
 
   // Frees a target from prepareOutput. Main thread.
-  fun releaseOutput(prepared: GpuOutput?) {
-    if (prepared != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) prepared.release()
+  fun releaseOutput(prepared: GpuOutput?, what: String = "an unused second-snapshot target") {
+    if (prepared != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) prepared.release(what)
   }
+
+  private const val KEPT_TARGET = "the kept target"
 
   // Pre-imports a held GPU snapshot's texture on the copy thread (GpuSnapshot.preImport). Failures are ignored: the
   // overlay's first frame imports it as before. Main thread: handler is the main thread's.

@@ -12,6 +12,7 @@ import android.graphics.PointF
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.MessageQueue
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
@@ -81,6 +82,35 @@ class ThemeRevealModule : Module() {
   private var secondView: RevealOverlayView? = null
   private var renderThreadAnimator: Animator? = null
 
+  // Set in OnDestroy, and again first thing in its main message. From then on this module prepares no kept target.
+  @Volatile
+  private var destroyed = false
+
+  // Prepare whose own capture is running (its generation), or -1. A cancel or a newer prepare makes it stale.
+  private var captureFor = -1
+
+  // The kept capture target's prepare: KEEP_TARGET_DELAY_MS after a switch or capture ends, then in main's next
+  // idle time, and only if CaptureRules.keepsTargetNow still holds by then.
+  private val keepTargetIdle = MessageQueue.IdleHandler {
+    // After OnDestroy, this module's state tells nothing about the new module's switch, and appContext can already
+    // be gone.
+    if (destroyed) return@IdleHandler false
+    val activity = appContext.currentActivity
+    val now = activity != null && CaptureRules.keepsTargetNow(
+      overlay != null,
+      pendingCapture != null,
+      held != null,
+      captureFor == generation,
+      isResumed(activity),
+    )
+    if (now) WindowSnapshot.keepTarget(activity, mainHandler)
+    false
+  }
+  private val keepTargetSoon = Runnable {
+    Looper.getMainLooper().queue.removeIdleHandler(keepTargetIdle)
+    Looper.getMainLooper().queue.addIdleHandler(keepTargetIdle)
+  }
+
   // Frees the kept bitmaps when the app is hidden or low on memory, or the screen changes size. Runs on main.
   private val memoryCallbacks = object : ComponentCallbacks2 {
     override fun onTrimMemory(level: Int) {
@@ -149,6 +179,11 @@ class ThemeRevealModule : Module() {
       voidCapture("pause")
     }
 
+    // A prepare refused by a pause runs now. After a trim the target stays hidden until the next snapshot.
+    OnActivityEntersForeground {
+      scheduleKeepTarget()
+    }
+
     OnActivityDestroys {
       generation++
       voidCapture("destroy")
@@ -158,12 +193,16 @@ class ThemeRevealModule : Module() {
     }
 
     OnDestroy {
+      // Here too, off main, for an idle handler that runs before the main message below.
+      destroyed = true
       callbacksContext?.unregisterComponentCallbacks(memoryCallbacks)
       callbacksContext = null
       mainHandler.post {
+        destroyed = true
         generation++
         voidCapture("destroy")
         removeOverlay()
+        cancelKeepTarget()
         WindowSnapshot.kept.hide()
         WindowSnapshot.target.hide()
         // Next module keeps a target only if its own warm-up runs.
@@ -195,14 +234,16 @@ class ThemeRevealModule : Module() {
       // Copy thread didn't start, so the first switch's path can't be prepared either.
       if (error == null) {
         WindowSnapshot.prepareFirst(activity, mainHandler)
-        WindowSnapshot.keepTarget(activity, mainHandler)
+        // Not right away: the app's first frames after the mount share the RenderThread with it.
+        scheduleKeepTarget()
       }
       if (error == null) promise.resolve() else promise.reject("ERR_THEME_REVEAL_WARM_UP", error.message, error)
     }
   }
 
-  // Off main: loads the classes a switch uses, so the first switch doesn't load them on the main thread. A class that
-  // can't load here loads on first use, as before.
+  // Off main: loads most of the classes a switch uses, so the first switch doesn't load them on the main thread.
+  // Synthetic lambda classes still load on first use. A class in this list must not touch the main looper in its
+  // static initializer, and none can fail there: a class whose initializer threw can't be used later either.
   private fun loadClasses() {
     val classes = listOf(
       HeldCapture::class.java,
@@ -230,9 +271,9 @@ class ThemeRevealModule : Module() {
       try {
         Class.forName(type.name, true, type.classLoader)
       } catch (_: LinkageError) {
-        // Loads on first use.
+        // Failed verification or link: the first use reports it.
       } catch (_: ClassNotFoundException) {
-        // Loads on first use.
+        // Not in this build.
       }
     }
   }
@@ -240,6 +281,8 @@ class ThemeRevealModule : Module() {
   // Takes the snapshot now and keeps it out of the window, so the screen stays live while the finger is down.
   private fun capture(viewTag: Int?, promise: Promise) {
     voidCapture("replaced")
+    // The prepare would hold up this capture's image on the copy thread.
+    cancelKeepTarget()
     val ticket = captureTicket
     val gen = generation
     val activity = appContext.currentActivity
@@ -262,6 +305,7 @@ class ThemeRevealModule : Module() {
       }
       if (pendingCapture === pending) pendingCapture = null
       if (snapshot == null) {
+        scheduleKeepTarget()
         promise.resolve(false)
         return@capture
       }
@@ -272,6 +316,8 @@ class ThemeRevealModule : Module() {
       ) {
         WindowSnapshot.kept.give(snapshot.bitmap)
         debug("dropped a capture result: voided, another switch or no window")
+        // The capture could have used the kept target, and no overlay is coming.
+        scheduleKeepTarget()
         promise.resolve(false)
         return@capture
       }
@@ -292,8 +338,11 @@ class ThemeRevealModule : Module() {
   // bitmaps, a GPU snapshot gets freed.
   private fun voidCapture(reason: String) {
     captureTicket++
+    val running = pendingCapture != null
     pendingCapture = null
     mainHandler.removeCallbacks(captureExpiry)
+    // That capture could have used the kept target, and no overlay is coming for it.
+    if (running || held != null) scheduleKeepTarget()
     val current = held ?: return
     held = null
     WindowSnapshot.kept.give(current.snapshot.bitmap)
@@ -309,6 +358,8 @@ class ThemeRevealModule : Module() {
     val generationBefore = generation
     val ticket = ++generation
     removeOverlay()
+    // This switch's capture is using the copy thread now.
+    cancelKeepTarget()
     val activity = appContext.currentActivity
     val window = activity?.window
     val decor = window?.decorView as? ViewGroup
@@ -325,10 +376,14 @@ class ThemeRevealModule : Module() {
     // A switch that ends without an overlay still changes the theme (JS applies it), so a capture that started
     // during its copy shows the screen from before. A newer prepare (ticket != generation) handles its own.
     fun fail() {
+      if (captureFor == ticket) captureFor = -1
       if (ticket == generation) voidCapture("switch failed")
+      // The capture could have used the kept target, and no overlay is coming.
+      scheduleKeepTarget()
       promise.resolve(null)
     }
     fun attach(snapshot: Snapshot?) {
+      if (captureFor == ticket) captureFor = -1
       if (snapshot == null) {
         fail()
         return
@@ -407,11 +462,13 @@ class ThemeRevealModule : Module() {
     val pending = pendingCapture
     if (pending != null && pending.activity === activity && pending.root === root) {
       pendingCapture = null
+      captureFor = ticket
       pending.waiter = ::attach
       debug("prepare waits for the running capture")
       return
     }
     voidCapture("not usable")
+    captureFor = ticket
     WindowSnapshot.capture(activity, root, mainHandler, ::attach)
   }
 
@@ -481,7 +538,8 @@ class ThemeRevealModule : Module() {
             revealOnRenderThread(view, space, x, y, durationMs, onEnd)
             return true
           }
-          RevealPath.RENDER_THREAD_INVERSE -> if (inverseRevealOnRenderThread(view, x, y, durationMs, onEnd)) return true
+          RevealPath.RENDER_THREAD_INVERSE ->
+            if (inverseRevealOnRenderThread(view, x, y, durationMs, onEnd)) return true
           RevealPath.UI_THREAD -> Unit
         }
         view.reveal(shapeOf(transition.shape), x, y, transition.type == "inverseReveal", durationMs, onEnd)
@@ -493,10 +551,10 @@ class ThemeRevealModule : Module() {
     return true
   }
 
-  // Circle reveal on the RenderThread. The overlay stays still while the next frame draws React Native's mount of the new
-  // theme. In the frame after that frame's commit, a second GPU snapshot of the same window(s), minus the overlay, goes
-  // into a second overlay view above the first, and a circular reveal clip grows on it. If that fails, the UI-thread
-  // reveal runs instead (SecondSnapshotWait).
+  // Circle reveal on the RenderThread. The overlay stays still while the next frame draws React Native's mount of the
+  // new theme. In the frame after that frame's commit, a second GPU snapshot of the same window(s), minus the overlay,
+  // goes into a second overlay view above the first, and a circular reveal clip grows on it. If that fails, the
+  // UI-thread reveal runs instead (SecondSnapshotWait).
   private fun revealOnRenderThread(
     view: RevealOverlayView,
     space: OverlayGeometry,
@@ -776,19 +834,20 @@ class ThemeRevealModule : Module() {
     geometry = null
     (view.parent as? ViewGroup)?.removeView(view)
     view.release(WindowSnapshot.kept::give)
-    keepTargetWhenIdle()
+    scheduleKeepTarget()
   }
 
-  // After a switch, once the main thread is idle: the capture target for the next switch's first snapshot. Not while
-  // another switch or capture is running.
-  private fun keepTargetWhenIdle() {
-    Looper.getMainLooper().queue.addIdleHandler {
-      val activity = appContext.currentActivity
-      if (overlay == null && pendingCapture == null && activity != null && isResumed(activity)) {
-        WindowSnapshot.keepTarget(activity, mainHandler)
-      }
-      false
-    }
+  // Prepares the capture target for the next switch's first snapshot (keepTargetIdle), KEEP_TARGET_DELAY_MS from now,
+  // so the frames right after a switch or mount don't share the RenderThread with it. A later call pushes it back.
+  private fun scheduleKeepTarget() {
+    if (destroyed) return
+    mainHandler.removeCallbacks(keepTargetSoon)
+    mainHandler.postDelayed(keepTargetSoon, KEEP_TARGET_DELAY_MS)
+  }
+
+  private fun cancelKeepTarget() {
+    mainHandler.removeCallbacks(keepTargetSoon)
+    Looper.getMainLooper().queue.removeIdleHandler(keepTargetIdle)
   }
 
   private fun debug(message: String) {
@@ -834,6 +893,9 @@ class ThemeRevealModule : Module() {
 
     // Longest prepare waits for the frame callback before resolving.
     const val RESOLVE_TIMEOUT_MS = 100L
+
+    // How long the kept capture target waits after a switch, capture or mount before its prepare.
+    const val KEEP_TARGET_DELAY_MS = 500L
 
     // The RenderThread reveal's fallbacks in a row, process-wide (RevealPlan.path's secondSnapshotOff).
     val fallbacks = FallbackCounter(RevealPlan.FALLBACKS_TO_OFF)
