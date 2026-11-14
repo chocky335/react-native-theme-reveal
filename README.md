@@ -403,8 +403,8 @@ What it gains on the first switch in a fresh process (3 runs each):
 | Pixel 8 Pro (API 37) | Snapshot ready after the switch started | 23.8-28.2 ms without the warm-up, 10.3-12.9 ms with it |
 | Mi 11 Lite (API 33) | Main thread time on the snapshot | The first snapshot was already fast (3.9-7.1 ms). No measurable change from the warm-up. |
 
-On the Pixel 8 Pro, the first `ImageReader` in the process accounted for 13.4-14.7 ms of the time
-without the warm-up.
+On the Pixel 8 Pro, the first `ImageReader` in the process accounted for 13.4-14.7 ms of the 18.2-19.0
+ms main thread time without the warm-up.
 
 What it costs on API 29 and up (the GPU snapshot path):
 
