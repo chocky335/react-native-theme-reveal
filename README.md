@@ -1033,7 +1033,7 @@ Try changes in the [`example/`](example/) app. The benchmark method and scripts 
 [`benchmark/README.md`](benchmark/README.md).
 
 ```sh
-npm test                                   # Jest
+npx jest --ci                              # Jest, one run (npm test starts watch mode in a terminal)
 bash scripts/test-ios-parser.sh            # iOS SVG path parser and motion tests, no simulator
 python3 -m unittest discover -s benchmark  # benchmark script tests
 ```
