@@ -369,7 +369,7 @@ app must be in the foreground to animate.
 ## Follow the system theme
 
 To follow the system theme, listen to `Appearance` and call `switchTo` without an origin, which gives you a
-`crossfade`. The example app does this in [`useFollowSystem.ts`](example/src/useFollowSystem.ts).
+`crossfade` unless the default `transition` is `wipe`. The example app does this in [`useFollowSystem.ts`](example/src/useFollowSystem.ts).
 
 ## Warm-up
 
