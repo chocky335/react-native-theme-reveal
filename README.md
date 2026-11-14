@@ -374,10 +374,9 @@ That gives a `crossfade`. The example app does this in
 
 ```tsx
 useEffect(() => {
-  const themeOf = (scheme: ColorSchemeName) => (scheme === 'dark' ? 'dark' : 'light')
-  reveal.switchTo(themeOf(Appearance.getColorScheme()))
+  reveal.switchTo(Appearance.getColorScheme() === 'dark' ? 'dark' : 'light')
   const subscription = Appearance.addChangeListener(({ colorScheme }) => {
-    reveal.switchTo(themeOf(colorScheme))
+    reveal.switchTo(colorScheme === 'dark' ? 'dark' : 'light')
   })
   return () => subscription.remove()
 }, [])
