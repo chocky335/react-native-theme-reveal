@@ -371,6 +371,8 @@ app must be in the foreground to animate.
 Listen to `Appearance` and call `switchTo` without an origin. That gives a `crossfade`. The example
 app does this in [`useFollowSystem.ts`](example/src/useFollowSystem.ts). To start in the system
 theme, seed your theme store from `Appearance.getColorScheme()`, so a cold start does not animate.
+If your app turns following on mid-session, like the example's toggle, also call `switchTo` with
+the current `Appearance.getColorScheme()` at that moment.
 
 ```tsx
 useEffect(() => {
