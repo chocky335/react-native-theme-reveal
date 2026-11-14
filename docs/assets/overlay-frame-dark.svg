@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="372" viewBox="0 0 800 372" role="img" aria-label="Release to the first frame with the overlay on screen, warm input tap, median of 6 runs, pass B, lower is better. Xiaomi Mi 11 Lite: theme-switch-animation 88.7 ms, skia 431.9 ms, react-native-theme-reveal 57.4 ms. Pixel 8 Pro: theme-switch-animation 64.9 ms, skia 330.8 ms, react-native-theme-reveal 49.4 ms.">
+<title>Release to the first frame with the overlay on screen, warm input tap, median of 6 runs, pass B, lower is better. Xiaomi Mi 11 Lite: theme-switch-animation 88.7 ms, skia 431.9 ms, react-native-theme-reveal 57.4 ms. Pixel 8 Pro: theme-switch-animation 64.9 ms, skia 330.8 ms, react-native-theme-reveal 49.4 ms.</title>
+
+<text x="20" y="26" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#e6edf3">Release to first overlay frame, warm tap (ms)</text>
+<text x="780" y="26" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#9198a1">Release builds, median of 6, pass B</text>
+<line x1="250.00" y1="50" x2="250.00" y2="316" stroke="#262c36" stroke-width="1"/>
+<text x="250.00" y="334" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#9198a1">0</text>
+<line x1="354.44" y1="50" x2="354.44" y2="316" stroke="#262c36" stroke-width="1"/>
+<text x="354.44" y="334" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#9198a1">100</text>
+<line x1="458.89" y1="50" x2="458.89" y2="316" stroke="#262c36" stroke-width="1"/>
+<text x="458.89" y="334" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#9198a1">200</text>
+<line x1="563.33" y1="50" x2="563.33" y2="316" stroke="#262c36" stroke-width="1"/>
+<text x="563.33" y="334" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#9198a1">300</text>
+<line x1="667.78" y1="50" x2="667.78" y2="316" stroke="#262c36" stroke-width="1"/>
+<text x="667.78" y="334" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#9198a1">400</text>
+<text x="20" y="66" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#e6edf3">Xiaomi Mi 11 Lite</text>
+<text x="165.7" y="66" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9198a1">Android 13 (API 33)</text>
+<text x="236" y="93.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#e6edf3">theme-switch-animation</text>
+<rect x="250" y="76" width="92.64" height="26" rx="6" fill="#6e7681"/>
+<text x="352.64" y="94" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#e6edf3">88.7</text>
+<text x="236" y="129.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#e6edf3">skia</text>
+<rect x="250" y="112" width="451.10" height="26" rx="6" fill="#6e7681"/>
+<text x="711.10" y="130" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#e6edf3">431.9</text>
+<text x="236" y="165.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#e6edf3">react-native-theme-reveal</text>
+<rect x="250" y="148" width="59.95" height="26" rx="6" fill="#4493f8"/>
+<text x="319.95" y="166" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#e6edf3">57.4</text>
+<text x="20" y="208" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#e6edf3">Pixel 8 Pro</text>
+<text x="117.1" y="208" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#9198a1">Android 17 (API 37)</text>
+<text x="236" y="235.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#e6edf3">theme-switch-animation</text>
+<rect x="250" y="218" width="67.78" height="26" rx="6" fill="#6e7681"/>
+<text x="327.78" y="236" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#e6edf3">64.9</text>
+<text x="236" y="271.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#e6edf3">skia</text>
+<rect x="250" y="254" width="345.50" height="26" rx="6" fill="#6e7681"/>
+<text x="605.50" y="272" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#e6edf3">330.8</text>
+<text x="236" y="307.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#e6edf3">react-native-theme-reveal</text>
+<rect x="250" y="290" width="51.60" height="26" rx="6" fill="#4493f8"/>
+<text x="311.60" y="308" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#e6edf3">49.4</text>
+<text x="485" y="360" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#9198a1">Time from the release (onPress) to the first frame with the overlay, lower is better. 450 ms circle reveal.</text>
+
+</svg>
