@@ -368,13 +368,12 @@ app must be in the foreground to animate.
 
 ## Follow the system theme
 
-Apply the system theme on mount, then listen to `Appearance` and call `switchTo` without an origin.
-That gives a `crossfade`. The example app does this in
-[`useFollowSystem.ts`](example/src/useFollowSystem.ts).
+Listen to `Appearance` and call `switchTo` without an origin. That gives a `crossfade`. The example
+app does this in [`useFollowSystem.ts`](example/src/useFollowSystem.ts). To start in the system
+theme, seed your theme store from `Appearance.getColorScheme()`, so a cold start does not animate.
 
 ```tsx
 useEffect(() => {
-  reveal.switchTo(Appearance.getColorScheme() === 'dark' ? 'dark' : 'light')
   const subscription = Appearance.addChangeListener(({ colorScheme }) => {
     reveal.switchTo(colorScheme === 'dark' ? 'dark' : 'light')
   })
